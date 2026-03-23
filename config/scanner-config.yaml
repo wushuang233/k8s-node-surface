@@ -1,0 +1,33 @@
+scan:
+  timeout_seconds: 0.5
+  concurrency: 300
+  interval_seconds: 3600
+  output_path: /tmp/k8s-port-report.json
+
+scope:
+  include_namespaces: []
+  exclude_namespaces:
+    - kube-public
+
+discovery:
+  service_external_ips: true
+  node_ports: true
+  host_ports: true
+  host_network_ports: true
+  full_node_tcp_scan: true
+
+ports:
+  full_node_tcp_ports: 1-65535
+
+report:
+  pretty_json: true
+
+traffic_observation:
+  enabled: true
+  host_proc_root: /host-proc
+
+web:
+  enabled: true
+  host: 0.0.0.0
+  port: 8080
+  refresh_seconds: 15
