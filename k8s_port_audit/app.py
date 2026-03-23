@@ -5,13 +5,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
-from .api import start_dashboard_server, stop_dashboard_server
-from .report import emit_report
-from .runtime import ApiException, ReportStore, ScanCoordinator, load_kubernetes_config
-from .scan import HostExposureScanner
-from .settings import ScannerConfig, load_scanner_config
+from .api.dashboard import start_dashboard_server, stop_dashboard_server
+from .domain import ScanRequest
+from .report.reporting import emit_report
+from .runtime.dependencies import ApiException, load_kubernetes_config
+from .runtime.state import ReportStore, ScanCoordinator
+from .runtime.watcher import KubernetesEventWatcher
+from .scan.scanner import HostExposureScanner
+from .settings.config import ScannerConfig, load_scanner_config
 
 
 def is_transient_kubernetes_api_error(error: Exception) -> bool:
@@ -34,8 +37,9 @@ def is_transient_kubernetes_api_error(error: Exception) -> bool:
 
 
 async def scan_once_with_retries(
-    scanner: HostExposureScanner,
+    scan_callable: Callable[[], Awaitable[dict[str, Any]]],
     report_store: ReportStore,
+    retry_label: str,
 ) -> dict[str, Any]:
     # 将启动阶段的短暂 API 抖动与持续性配置错误区分处理。
     max_attempts = 8
@@ -43,14 +47,14 @@ async def scan_once_with_retries(
 
     for attempt in range(1, max_attempts + 1):
         try:
-            return await scanner.scan_once()
+            return await scan_callable()
         except Exception as exc:
             if not is_transient_kubernetes_api_error(exc) or attempt >= max_attempts:
                 raise
 
             delay_seconds = min(base_delay_seconds * (2 ** (attempt - 1)), 20.0)
             message = (
-                f"扫描前连接 Kubernetes API 失败，{delay_seconds:.0f} 秒后自动重试 "
+                f"{retry_label}前连接 Kubernetes API 失败，{delay_seconds:.0f} 秒后自动重试 "
                 f"({attempt}/{max_attempts})：{type(exc).__name__}: {exc}"
             )
             report_store.update_error(message)
@@ -101,28 +105,45 @@ async def run_scan_loop(
     report_store: ReportStore,
     scan_coordinator: ScanCoordinator,
 ) -> int:
+    next_request = ScanRequest(source="startup", reason="启动扫描", full_scan=True)
+
     while True:
         scan_coordinator.mark_scan_started()
         try:
-            report = await scan_once_with_retries(scanner, report_store)
+            previous_report = report_store.latest_report()
+            report = await scan_once_with_retries(
+                lambda: scanner.scan_for_request(next_request, previous_report),
+                report_store,
+                retry_label="扫描",
+            )
         except Exception as exc:
             message = f"{type(exc).__name__}: {exc}"
             report_store.update_error(message)
             print(f"扫描失败: {message}", flush=True)
-            if scanner_config.interval_seconds == 0:
+            if scanner_config.interval_seconds == 0 and not scanner_config.watch_kubernetes_events:
                 raise
         else:
             report_store.update_report(report)
             emit_report(report, scanner_config.output_path, scanner_config.pretty_json)
-            if scanner_config.interval_seconds == 0:
+            if scanner_config.interval_seconds == 0 and not scanner_config.watch_kubernetes_events:
                 return 0
         finally:
             scan_coordinator.mark_scan_finished()
 
-        # 周期扫描与手动刷新共用一个等待入口，避免状态竞争。
-        manual_requested = await scan_coordinator.wait_for_next_scan(scanner_config.interval_seconds)
-        if manual_requested:
-            print("收到手动扫描请求，立即开始下一轮扫描。", flush=True)
+        # 周期扫描、手动刷新与 Kubernetes 事件触发共用一个等待入口，避免状态竞争。
+        refresh_requested = await scan_coordinator.wait_for_next_scan(
+            scanner_config.interval_seconds,
+            allow_event_only=scanner_config.watch_kubernetes_events,
+        )
+        if refresh_requested is None:
+            next_request = ScanRequest(source="interval", reason="定时刷新", full_scan=True)
+            continue
+
+        next_request = refresh_requested
+        if next_request.full_scan:
+            print("收到新的完整刷新请求，立即开始下一轮扫描。", flush=True)
+        else:
+            print("收到新的局部刷新请求，立即更新受影响的暴露面。", flush=True)
 
 
 async def run() -> int:
@@ -146,10 +167,13 @@ async def run() -> int:
     scan_coordinator = ScanCoordinator(scanner_config)
     scan_coordinator.bind_loop(asyncio.get_running_loop())
     dashboard_server = start_dashboard_server(scanner_config, report_store, scan_coordinator)
+    event_watcher = KubernetesEventWatcher(scanner_config, scan_coordinator)
+    event_watcher.start()
 
     try:
         return await run_scan_loop(scanner, scanner_config, report_store, scan_coordinator)
     finally:
+        event_watcher.stop()
         stop_dashboard_server(dashboard_server)
 
 

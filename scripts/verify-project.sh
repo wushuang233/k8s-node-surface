@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 
 root = Path(os.environ["ROOT_DIR"])
-for path in sorted(root.glob("*.py")) + sorted(root.joinpath("k8s_port_audit").glob("*.py")):
+for path in sorted(root.rglob("*.py")):
     if "__pycache__" in path.parts:
         continue
     source = path.read_text(encoding="utf-8")

@@ -9,8 +9,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 from ..report import utc_now
-from ..runtime import ReportStore, ScanCoordinator
-from ..settings import ScannerConfig
+from ..runtime.state import ReportStore, ScanCoordinator
+from ..settings.config import ScannerConfig
 
 WEB_DIR = Path(__file__).resolve().parent.parent.parent / "web"
 CORE_WEB_ASSETS = ["index.html", "styles.css", "app.js", "app-data.js", "app-render.js", "render-fragments.js"]
@@ -69,7 +69,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
 
         if path == "/api/scan":
-            self.server.scan_coordinator.request_scan("dashboard")
+            self.server.scan_coordinator.request_scan("manual", reason="用户手动刷新")
             self.serve_json(self.server.dashboard_snapshot(), status_code=202)
             return
 
@@ -93,8 +93,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         payload = asset_path.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", content_type)
-        # HTML 保持 no-store，避免页面骨架与静态资源版本错位。
-        cache_control = "no-store" if asset_path.name == "index.html" else "public, max-age=300"
+        # 面板资源更新频繁，统一关闭缓存，避免 HTML、CSS、JS 版本错位。
+        cache_control = "no-store"
         self.send_header("Cache-Control", cache_control)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()

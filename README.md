@@ -137,7 +137,8 @@
 │   ├── runtime/
 │   │   ├── __init__.py
 │   │   ├── dependencies.py
-│   │   └── state.py
+│   │   ├── state.py
+│   │   └── watcher.py
 │   ├── scan/
 │   │   ├── __init__.py
 │   │   ├── discovery.py
@@ -163,7 +164,7 @@
 │   ├── render-fragments.js
 │   └── styles.css
 └── dist/
-    └── k8s-port-audit-local-0.1.8/
+    └── k8s-port-audit-local-0.1.9/
 ```
 
 ## 模块说明
@@ -172,6 +173,7 @@
 - [k8s_port_audit/settings/config.py](k8s_port_audit/settings/config.py)：配置解析与校验
 - [k8s_port_audit/runtime/dependencies.py](k8s_port_audit/runtime/dependencies.py)：依赖检查与 Kubernetes 配置加载
 - [k8s_port_audit/runtime/state.py](k8s_port_audit/runtime/state.py)：报告缓存与手动刷新协调
+- [k8s_port_audit/runtime/watcher.py](k8s_port_audit/runtime/watcher.py)：Kubernetes 事件监听与自动刷新触发
 - [k8s_port_audit/domain/models.py](k8s_port_audit/domain/models.py)：共享数据模型
 - [k8s_port_audit/scan/discovery.py](k8s_port_audit/scan/discovery.py)：宿主机暴露路径发现
 - [k8s_port_audit/scan/scanner.py](k8s_port_audit/scan/scanner.py)：单轮扫描编排
@@ -181,7 +183,7 @@
 - [k8s_port_audit/report/exposure_summary.py](k8s_port_audit/report/exposure_summary.py)：页面对象归并、主分类选择、对象分组
 - [k8s_port_audit/report/reporting.py](k8s_port_audit/report/reporting.py)：报告结构装配与 JSON 输出
 - [k8s_port_audit/api/dashboard.py](k8s_port_audit/api/dashboard.py)：HTTP API 与静态页面
-- [web/app.js](web/app.js)：前端状态管理与轮询
+- [web/app.js](web/app.js)：前端状态管理、标签页切换与轮询
 - [web/app-data.js](web/app-data.js)：前端数据归一化与分组
 - [web/app-render.js](web/app-render.js)：页面渲染
 - [web/render-fragments.js](web/render-fragments.js)：节点卡片、对象卡片、表格行片段
@@ -217,27 +219,32 @@ http://127.0.0.1:8080
 
 - 优先加载集群内配置，失败后回退到本机 `kubeconfig`
 - 当前仅支持 `TCP`
-- 页面支持手动刷新
+- 后端会根据 `Pod / Service / Node` 变更自动刷新
+  - `Service / Pod` 只刷新受影响对象
+  - `Node` 变更、手动刷新、周期兜底仍执行完整扫描
+- 页面提供总览和分类标签页，便于按暴露路径查看
 - 如在宿主机本地运行源码并需要被动 TCP 证据，可将 `traffic_observation.host_proc_root` 设为 `/proc`
 
 ## 配置项
 
 主要配置项见 [config/scanner-config.yaml](config/scanner-config.yaml)：
 
-- `scan`：超时、并发、扫描周期、输出路径
+- `scan`：超时、并发、周期兜底、事件触发刷新、输出路径
+  - 重点配置：`watch_kubernetes_events`、`event_watch_timeout_seconds`、`event_debounce_seconds`
+  - `event_debounce_seconds` 用来把短时间内连续发生的变更合并成一次刷新请求
 - `scope`：命名空间白名单与黑名单
 - `discovery`：是否启用各类宿主机暴露路径发现
 - `ports.full_node_tcp_ports`：节点地址探测端口范围
 - `traffic_observation`：宿主机 `/proc` TCP 证据开关与路径
-- `web`：监听地址、端口、刷新周期
+- `web`：监听地址、端口、前端轮询周期
 
 ## Kubernetes 部署
 
 ### 镜像仓库部署
 
 ```bash
-docker build -t your-registry/k8s-port-audit:0.1.8 .
-docker push your-registry/k8s-port-audit:0.1.8
+docker build -t your-registry/k8s-port-audit:0.1.9 .
+docker push your-registry/k8s-port-audit:0.1.9
 kubectl apply -f manifests/k8s-port-audit.yaml
 ```
 
@@ -259,12 +266,12 @@ Windows PowerShell：
 生成目录：
 
 ```text
-dist/k8s-port-audit-local-0.1.8/
+dist/k8s-port-audit-local-0.1.9/
 ```
 
 目录内容：
 
-- `k8s-port-audit-0.1.8.tar`
+- `k8s-port-audit-0.1.9.tar`
 - `k8s-port-audit-local.yaml`
 - `import-and-apply.sh`
 - `README.md`
@@ -274,8 +281,8 @@ dist/k8s-port-audit-local-0.1.8/
 目标机器执行：
 
 ```bash
-cd k8s-port-audit-local-0.1.8
-sudo ctr -n k8s.io images import ./k8s-port-audit-0.1.8.tar
+cd k8s-port-audit-local-0.1.9
+sudo ctr -n k8s.io images import ./k8s-port-audit-0.1.9.tar
 kubectl apply -f ./k8s-port-audit-local.yaml
 kubectl -n port-audit rollout status deployment/k8s-port-audit --timeout=180s
 ```
@@ -283,7 +290,7 @@ kubectl -n port-audit rollout status deployment/k8s-port-audit --timeout=180s
 或直接运行：
 
 ```bash
-cd k8s-port-audit-local-0.1.8
+cd k8s-port-audit-local-0.1.9
 chmod +x ./import-and-apply.sh
 ./import-and-apply.sh
 ```
@@ -313,7 +320,7 @@ chmod +x ./import-and-apply.sh
 
 ## 维护约定
 
-- 当前保留版本：`0.1.8`
-- [VERSION](VERSION) 固定为 `0.1.8`
-- `dist/` 仅保留 [k8s-port-audit-local-0.1.8](dist/k8s-port-audit-local-0.1.8)
+- 当前保留版本：`0.1.9`
+- [VERSION](VERSION) 固定为 `0.1.9`
+- `dist/` 仅保留 [k8s-port-audit-local-0.1.9](dist/k8s-port-audit-local-0.1.9)
 - 打包脚本生成新 bundle 时自动清理旧版本目录

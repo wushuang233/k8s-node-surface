@@ -11,18 +11,18 @@
 
 - 当前目录为项目根目录
 - 本机已安装 Docker
-- [VERSION](/home/wushuang/test-py/snake/VERSION) 与 [manifests/k8s-port-audit-local.yaml](/home/wushuang/test-py/snake/manifests/k8s-port-audit-local.yaml) 里的镜像标签保持一致
+- [VERSION](./VERSION) 与 [manifests/k8s-port-audit-local.yaml](./manifests/k8s-port-audit-local.yaml) 里的镜像标签保持一致
 
 当前版本：
 
 ```text
-0.1.8
+0.1.9
 ```
 
 默认本地镜像名：
 
 ```text
-local/k8s-port-audit:0.1.8
+local/k8s-port-audit:0.1.9
 ```
 
 ## 1. 仅构建本地镜像
@@ -30,14 +30,14 @@ local/k8s-port-audit:0.1.8
 在项目根目录执行：
 
 ```bash
-docker build -t local/k8s-port-audit:0.1.8 .
+docker build -t local/k8s-port-audit:0.1.9 .
 ```
 
 可选校验：
 
 ```bash
-docker image inspect local/k8s-port-audit:0.1.8 >/dev/null
-docker run --rm local/k8s-port-audit:0.1.8 --help
+docker image inspect local/k8s-port-audit:0.1.9 >/dev/null
+docker run --rm local/k8s-port-audit:0.1.9 --help
 ```
 
 ## 2. 只导出镜像 tar
@@ -45,14 +45,14 @@ docker run --rm local/k8s-port-audit:0.1.8 --help
 先完成镜像构建，再执行：
 
 ```bash
-mkdir -p dist/k8s-port-audit-local-0.1.8
-docker save -o dist/k8s-port-audit-local-0.1.8/k8s-port-audit-0.1.8.tar local/k8s-port-audit:0.1.8
+mkdir -p dist/k8s-port-audit-local-0.1.9
+docker save -o dist/k8s-port-audit-local-0.1.9/k8s-port-audit-0.1.9.tar local/k8s-port-audit:0.1.9
 ```
 
 生成结果：
 
 ```text
-dist/k8s-port-audit-local-0.1.8/k8s-port-audit-0.1.8.tar
+dist/k8s-port-audit-local-0.1.9/k8s-port-audit-0.1.9.tar
 ```
 
 ## 3. 生成完整离线 bundle
@@ -81,22 +81,27 @@ Windows PowerShell：
 生成目录：
 
 ```text
-dist/k8s-port-audit-local-0.1.8/
+dist/k8s-port-audit-local-0.1.9/
 ```
 
-## 4. 只刷新 bundle 文档，不重新构建镜像
+## 4. 复用本地已有镜像重新打 bundle
 
-如果镜像已经存在，本次只想同步文档、清单和脚本，可以执行：
+如果本机已经有正确版本的镜像，本次不想重新执行 `docker build`，可以执行：
 
 ```bash
 SKIP_DOCKER_BUILD=1 ./scripts/build-local-bundle.sh
 ```
 
-这个模式会直接复用本地已有镜像：
+这个模式会直接复用本地已有镜像并重新导出 tar、清单和脚本：
 
 ```text
-local/k8s-port-audit:0.1.8
+local/k8s-port-audit:0.1.9
 ```
+
+注意：
+
+- 这个模式不会把新的源码变更自动带进镜像
+- 如果改过 Python、前端或 Dockerfile，先重新构建镜像，再打 bundle
 
 ## 5. 常用检查
 
@@ -109,7 +114,7 @@ docker images | grep k8s-port-audit
 检查 tar 是否生成：
 
 ```bash
-ls -lh dist/k8s-port-audit-local-0.1.8/
+ls -lh dist/k8s-port-audit-local-0.1.9/
 ```
 
 校验项目结构：
@@ -126,7 +131,7 @@ ls -lh dist/k8s-port-audit-local-0.1.8/
 
 - Docker daemon 正常
 - `VERSION` 与本地部署清单镜像标签一致
-- 本机已存在 `local/k8s-port-audit:0.1.8`
+- 本机已存在 `local/k8s-port-audit:0.1.9`
 
 只想复用已有镜像时，优先使用：
 
@@ -152,15 +157,15 @@ KEEP_DOCKER_PROXY=1 ./scripts/build-local-bundle.sh
 
 需要同时更新：
 
-- [VERSION](/home/wushuang/test-py/snake/VERSION)
-- [manifests/k8s-port-audit-local.yaml](/home/wushuang/test-py/snake/manifests/k8s-port-audit-local.yaml)
-- 如有需要，也更新 [manifests/k8s-port-audit.yaml](/home/wushuang/test-py/snake/manifests/k8s-port-audit.yaml)
+- [VERSION](./VERSION)
+- [manifests/k8s-port-audit-local.yaml](./manifests/k8s-port-audit-local.yaml)
+- 如有需要，也更新 [manifests/k8s-port-audit.yaml](./manifests/k8s-port-audit.yaml)
 
 ## 建议流程
 
 推荐顺序：
 
-1. 先运行 [scripts/verify-project.sh](/home/wushuang/test-py/snake/scripts/verify-project.sh)
+1. 先运行 [scripts/verify-project.sh](./scripts/verify-project.sh)
 2. 再构建本地镜像
 3. 再生成离线 bundle
-4. 最后按 [README-DEPLOY.md](/home/wushuang/test-py/snake/README-DEPLOY.md) 部署
+4. 最后按 [README-DEPLOY.md](./README-DEPLOY.md) 部署

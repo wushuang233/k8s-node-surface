@@ -1,6 +1,6 @@
 # 架构说明
 
-保留版本：`0.1.8`
+保留版本：`0.1.9`
 
 本文件只说明代码分层和运行流程。部署命令见 [README-DEPLOY.md](README-DEPLOY.md)。
 
@@ -25,7 +25,10 @@
 4. 对节点地址执行 full-node TCP 扫描
 5. 读取 `/proc` TCP 表补充监听与活跃连接证据
 6. 归并结果并生成 dashboard 摘要
-7. 更新内存报告并通过 HTTP API 提供给前端
+7. 监听 `Pod / Service / Node` 变更
+   - `Service / Pod` 事件默认走局部刷新
+   - `Node` 事件、手动刷新、周期兜底走完整扫描
+8. 更新内存报告并通过 HTTP API 提供给前端
 
 ## 分层结构
 
@@ -51,6 +54,9 @@
 - [k8s_port_audit/runtime/dependencies.py](k8s_port_audit/runtime/dependencies.py)
   - 第三方依赖探测
   - 集群内配置 / 本地 kubeconfig 加载
+- [k8s_port_audit/runtime/watcher.py](k8s_port_audit/runtime/watcher.py)
+  - Kubernetes watch 事件监听
+  - 只对真正影响暴露面的变更发起刷新请求
 
 ### 数据模型层
 
@@ -87,7 +93,7 @@
 - [k8s_port_audit/runtime/state.py](k8s_port_audit/runtime/state.py)
   - 完整报告缓存
   - 面板快照缓存
-  - 手动刷新协调
+  - 手动刷新、周期兜底与事件局部刷新协调
 - [k8s_port_audit/core.py](k8s_port_audit/core.py)
   - 兼容导出层
 
@@ -99,7 +105,7 @@
   - `/healthz`
   - 静态资源分发
 - [web/app.js](web/app.js)
-  - 页面状态与轮询
+  - 页面状态、标签页与轮询
 - [web/app-data.js](web/app-data.js)
   - 数据归一化、分组、筛选
 - [web/app-render.js](web/app-render.js)
@@ -144,6 +150,23 @@
 
 这样可以降低 `/api/dashboard` 体积，减轻前端轮询和渲染负担。
 
+## 刷新机制
+
+刷新来源有三类：
+
+1. Kubernetes 事件触发
+2. 手动点击“立即刷新”
+3. `scan.interval_seconds` 周期兜底
+
+`ScanCoordinator` 负责把这些请求合并到同一个等待入口，避免重复并发扫描。
+
+事件刷新规则：
+
+- `Service` 变化：只刷新对应 `ExternalIP / LoadBalancer / NodePort`
+- `Pod` 变化：只刷新对应 `HostPort / HostNetworkPod`
+- `Node` 变化：执行完整扫描
+- 同一时间窗口内的多条事件会先合并，再进入下一轮刷新
+
 ## 交付目录
 
 当前保留目录：
@@ -153,7 +176,7 @@
 - `manifests/`
 - `scripts/`
 - `web/`
-- `dist/k8s-port-audit-local-0.1.8/`
+- `dist/k8s-port-audit-local-0.1.9/`
 
 当前约定：
 

@@ -66,12 +66,20 @@ export function createRenderer(refs) {
       notes.push(`最近完成：${formatScanMode(scanState.last_completed_mode)}`);
     }
 
-    if (scanState.pending_manual_scan) {
-      notes.push("已加入刷新队列");
+    if (scanState.pending_scan) {
+      notes.push(
+        scanState.pending_request_source === "manual"
+          ? "手动刷新已排队"
+          : "检测到变更，等待自动刷新"
+      );
     }
 
     if (scanState.full_node_tcp_scan) {
-      notes.push(`节点全端口范围：${scanState.full_node_tcp_port_spec}`);
+      notes.push(`节点扫描范围 ${scanState.full_node_tcp_port_spec}`);
+    }
+
+    if (scanState.watch_kubernetes_events) {
+      notes.push("事件触发刷新已启用");
     }
 
     const enabledSources = [];
@@ -88,56 +96,35 @@ export function createRenderer(refs) {
       enabledSources.push("HostNetwork");
     }
     if (enabledSources.length) {
-      notes.push(`归因来源：${enabledSources.join(" + ")}`);
+      notes.push(`归因 ${enabledSources.join(" + ")}`);
     }
 
     if (trafficObservation.available) {
       notes.push(
-        `被动 TCP 证据：命中 ${trafficObservation.matched_result_count || 0} 条，活跃 ${trafficObservation.active_traffic_target_count || 0} 条`
+        `流量证据 ${trafficObservation.matched_result_count || 0} 条，活跃 ${trafficObservation.active_traffic_target_count || 0} 条`
       );
     } else if (scanState.traffic_observation_enabled && trafficObservation.error) {
-      notes.push(`被动 TCP 证据不可用：${trafficObservation.error}`);
+      notes.push(`流量证据不可用：${trafficObservation.error}`);
+    }
+
+    if (scanState.last_request_source === "k8s_watch" && scanState.last_request_reason) {
+      notes.push(`最近变更 ${scanState.last_request_reason}`);
     }
 
     refs.scanStateNote.textContent = notes.join(" · ") || "等待状态更新";
 
     if (scanRequestInFlight) {
       refs.scanNowButton.textContent = "提交中";
-    } else if (scanState.pending_manual_scan) {
-      refs.scanNowButton.textContent = "已加入队列";
     } else if (scanState.scan_in_progress) {
       refs.scanNowButton.textContent = "扫描中";
+    } else if (scanState.pending_scan && scanState.pending_request_source === "manual") {
+      refs.scanNowButton.textContent = "手动刷新已排队";
+    } else if (scanState.pending_scan) {
+      refs.scanNowButton.textContent = "等待自动刷新";
     } else {
       refs.scanNowButton.textContent = "立即刷新";
     }
     refs.scanNowButton.disabled = scanRequestInFlight;
-  }
-
-  function renderMethodology(payload) {
-    const methodology = payload.methodology || payload.latest_report?.methodology || {};
-    const execution = payload.latest_report?.scan_execution || {};
-    const trafficObservation = execution.traffic_observation || {};
-
-    refs.methodSteps.innerHTML = "";
-    refs.methodLimits.innerHTML = "";
-    refs.methodFocus.textContent = methodology.focus || "仅保留宿主机地址上的 TCP 暴露面。";
-
-    (methodology.steps || []).forEach((step) => {
-      const item = document.createElement("li");
-      item.textContent = step;
-      refs.methodSteps.appendChild(item);
-    });
-
-    const limits = [...(methodology.limitations || [])];
-    if (trafficObservation.scope === "local_node_only") {
-      limits.unshift("被动 TCP 证据仅覆盖当前运行节点。");
-    }
-
-    limits.forEach((limit) => {
-      const item = document.createElement("li");
-      item.textContent = limit;
-      refs.methodLimits.appendChild(item);
-    });
   }
 
   function renderNodes(nodeGroups) {
@@ -184,7 +171,7 @@ export function createRenderer(refs) {
     if (!items.length) {
       const row = document.createElement("tr");
       const cell = document.createElement("td");
-      cell.colSpan = 7;
+      cell.colSpan = 6;
       cell.appendChild(cloneEmptyState());
       row.appendChild(cell);
       refs.resultTableBody.appendChild(row);
@@ -209,7 +196,6 @@ export function createRenderer(refs) {
     renderError,
     showPageError,
     renderScanState,
-    renderMethodology,
     renderNodes,
     renderGroups,
     renderTable,

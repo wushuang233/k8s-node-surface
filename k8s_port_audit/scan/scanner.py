@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import copy
 import os
 from pathlib import Path
 from typing import Any, Iterable
 
-from ..domain import NodeCandidate, ProbeTarget
+from ..domain import NodeCandidate, ProbeTarget, ScanRequest
 from ..report import build_host_exposure_summary, build_methodology_summary, build_scan_summary, utc_now
-from ..runtime import client
-from ..settings import ScannerConfig
+from ..runtime.dependencies import client
+from ..settings.config import ScannerConfig
 from .discovery import HostExposureDiscovery
 from .probe import merge_probe_results, probe_targets
 from .traffic import annotate_results_with_traffic_observations, build_passive_observation_index
@@ -130,11 +131,17 @@ class HostExposureScanner:
 
     def build_scan_execution(
         self,
+        scan_request: ScanRequest,
         full_node_results: list[dict[str, Any]],
         traffic_observation_summary: dict[str, Any],
     ) -> dict[str, Any]:
         return {
             "mode": "host_exposure",
+            "refresh_scope": "full" if scan_request.full_scan else "partial",
+            "request_source": scan_request.source,
+            "request_reason": scan_request.reason,
+            "partial_service_ref_count": len(scan_request.service_refs),
+            "partial_pod_ref_count": len(scan_request.pod_refs),
             "full_node_tcp_scan": self.scanner_config.full_node_tcp_scan,
             "full_node_tcp_port_spec": self.scanner_config.full_node_tcp_port_spec,
             "full_node_tcp_port_count": len(self.scanner_config.full_node_tcp_ports),
@@ -143,20 +150,87 @@ class HostExposureScanner:
             "traffic_observation": traffic_observation_summary,
         }
 
-    async def scan_once(self) -> dict[str, Any]:
-        discovery_snapshot = self.discovery.discover()
-        targeted_results = await self.collect_targeted_results(discovery_snapshot)
-        full_node_results = await self.collect_full_node_results(discovery_snapshot)
+    @staticmethod
+    def source_matches_request(source: dict[str, Any], scan_request: ScanRequest) -> bool:
+        namespace = source.get("namespace")
+        name = source.get("name")
+        if source.get("kind") == "service" and (namespace, name) in scan_request.service_refs:
+            return True
+        if source.get("kind") == "pod" and (namespace, name) in scan_request.pod_refs:
+            return True
+        return False
 
-        # targeted_results 提供路径信息，full_node_results 提供真实开放端口补充。
-        results = merge_probe_results(targeted_results, full_node_results)
-        traffic_observation_summary = self.annotate_with_traffic_observations(
-            results,
-            discovery_snapshot.node_candidates,
-        )
+    def strip_request_sources(
+        self,
+        previous_results: list[dict[str, Any]],
+        scan_request: ScanRequest,
+    ) -> list[dict[str, Any]]:
+        retained_results: list[dict[str, Any]] = []
 
-        discovery_snapshot.inventory["unique_targets"] = len(results)
-        summary = build_scan_summary(discovery_snapshot.inventory, results)
+        for result in previous_results:
+            remaining_sources = [
+                copy.deepcopy(source)
+                for source in result.get("sources", [])
+                if not self.source_matches_request(source, scan_request)
+            ]
+            if not remaining_sources:
+                continue
+
+            retained_result = copy.deepcopy(result)
+            retained_result["sources"] = remaining_sources
+            retained_results.append(retained_result)
+
+        return retained_results
+
+    @staticmethod
+    def drop_stale_observation_fields(results: list[dict[str, Any]]) -> None:
+        for result in results:
+            for field_name in (
+                "traffic_observed",
+                "listener_observed",
+                "observed_states",
+                "observed_sample_count",
+            ):
+                result.pop(field_name, None)
+
+    def merge_incremental_results(
+        self,
+        previous_results: list[dict[str, Any]],
+        partial_results: list[dict[str, Any]],
+        scan_request: ScanRequest,
+    ) -> list[dict[str, Any]]:
+        retained_results = self.strip_request_sources(previous_results, scan_request)
+        retained_status_by_target = {
+            (result["address"], result["port"]): result.get("status")
+            for result in retained_results
+        }
+
+        normalized_partial_results: list[dict[str, Any]] = []
+        for result in partial_results:
+            target_key = (result["address"], result["port"])
+            retained_status = retained_status_by_target.get(target_key)
+
+            # 事件局部刷新只负责更新相关对象的归因路径；如果同一地址端口仍被别的路径探测为 open，
+            # 不再把本次 closed/timeout 结果重新挂回去，避免页面上出现“节点仍开放，但对象归因还停留在旧路径”。
+            if retained_status == "open" and result.get("status") != "open":
+                continue
+
+            normalized_partial_results.append(result)
+
+        return merge_probe_results(retained_results, normalized_partial_results)
+
+    def build_report(
+        self,
+        discovery_snapshot: Any,
+        results: list[dict[str, Any]],
+        full_node_results: list[dict[str, Any]],
+        traffic_observation_summary: dict[str, Any],
+        scan_request: ScanRequest,
+        inventory_override: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        inventory = copy.deepcopy(inventory_override or discovery_snapshot.inventory)
+        inventory["unique_targets"] = len(results)
+        summary = build_scan_summary(inventory, results)
         external_exposure_summary = build_host_exposure_summary(
             results,
             node_candidates=discovery_snapshot.node_candidates,
@@ -166,10 +240,80 @@ class HostExposureScanner:
             "generated_at": utc_now(),
             "cluster": self.get_cluster_info(),
             "scanner_config": self.scanner_config.to_report_dict(),
-            "scan_execution": self.build_scan_execution(full_node_results, traffic_observation_summary),
+            "scan_execution": self.build_scan_execution(
+                scan_request,
+                full_node_results,
+                traffic_observation_summary,
+            ),
             "summary": summary,
             "external_exposure_summary": external_exposure_summary,
             "traffic_observation_summary": traffic_observation_summary,
             "methodology": build_methodology_summary(),
             "results": results,
         }
+
+    async def scan_once(self) -> dict[str, Any]:
+        scan_request = ScanRequest(source="startup", reason="启动扫描", full_scan=True)
+        discovery_snapshot = self.discovery.discover()
+        targeted_results = await self.collect_targeted_results(discovery_snapshot)
+        full_node_results = await self.collect_full_node_results(discovery_snapshot)
+
+        # targeted_results 提供路径信息，full_node_results 提供真实开放端口补充。
+        results = merge_probe_results(targeted_results, full_node_results)
+        self.drop_stale_observation_fields(results)
+        traffic_observation_summary = self.annotate_with_traffic_observations(
+            results,
+            discovery_snapshot.node_candidates,
+        )
+        return self.build_report(
+            discovery_snapshot,
+            results,
+            full_node_results,
+            traffic_observation_summary,
+            scan_request,
+        )
+
+    async def scan_for_request(
+        self,
+        scan_request: ScanRequest,
+        previous_report: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if scan_request.full_scan or previous_report is None:
+            discovery_snapshot = self.discovery.discover()
+            targeted_results = await self.collect_targeted_results(discovery_snapshot)
+            full_node_results = await self.collect_full_node_results(discovery_snapshot)
+            results = merge_probe_results(targeted_results, full_node_results)
+            self.drop_stale_observation_fields(results)
+            traffic_observation_summary = self.annotate_with_traffic_observations(
+                results,
+                discovery_snapshot.node_candidates,
+            )
+            return self.build_report(
+                discovery_snapshot,
+                results,
+                full_node_results,
+                traffic_observation_summary,
+                scan_request,
+            )
+
+        discovery_snapshot = self.discovery.discover(
+            service_refs=scan_request.service_refs,
+            pod_refs=scan_request.pod_refs,
+        )
+        partial_results = await self.collect_targeted_results(discovery_snapshot)
+        previous_results = copy.deepcopy(previous_report.get("results") or [])
+        results = self.merge_incremental_results(previous_results, partial_results, scan_request)
+        self.drop_stale_observation_fields(results)
+        traffic_observation_summary = self.annotate_with_traffic_observations(
+            results,
+            discovery_snapshot.node_candidates,
+        )
+        previous_inventory = copy.deepcopy(previous_report.get("summary", {}).get("inventory") or {})
+        return self.build_report(
+            discovery_snapshot,
+            results,
+            [],
+            traffic_observation_summary,
+            scan_request,
+            inventory_override=previous_inventory or None,
+        )

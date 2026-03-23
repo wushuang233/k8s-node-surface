@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import copy
 import threading
+import time
 from typing import Any
 
+from ..domain import ScanRequest
 from ..report import utc_now
-from ..settings import ScannerConfig
+from ..settings.config import ScannerConfig
 
 
 class ReportStore:
@@ -77,18 +79,19 @@ class ReportStore:
 
 
 class ScanCoordinator:
-    """协调周期扫描与手动刷新请求。"""
+    """协调完整扫描与事件触发的局部刷新请求。"""
 
     def __init__(self, scanner_config: ScannerConfig) -> None:
         self.scanner_config = scanner_config
         self._lock = threading.Lock()
-        self._request_seq = 0
-        self._handled_request_seq = 0
+        self._pending_request: ScanRequest | None = None
         self._scan_in_progress = False
         self._last_scan_started_at: str | None = None
         self._last_scan_completed_at: str | None = None
         self._last_request_at: str | None = None
         self._last_request_source: str | None = None
+        self._last_request_reason: str | None = None
+        self._last_request_monotonic = 0.0
         self._loop: asyncio.AbstractEventLoop | None = None
         self._event: asyncio.Event | None = None
 
@@ -96,11 +99,33 @@ class ScanCoordinator:
         self._loop = loop
         self._event = asyncio.Event()
 
-    def request_scan(self, source: str = "manual") -> None:
+    def request_scan(
+        self,
+        source: str = "manual",
+        reason: str | None = None,
+        *,
+        full_scan: bool = True,
+        service_refs: set[tuple[str, str]] | None = None,
+        pod_refs: set[tuple[str, str]] | None = None,
+    ) -> None:
+        request = ScanRequest(
+            source=source,
+            reason=reason,
+            full_scan=full_scan,
+            service_refs=set(service_refs or ()),
+            pod_refs=set(pod_refs or ()),
+        )
+
         with self._lock:
-            self._request_seq += 1
+            self._pending_request = (
+                request
+                if self._pending_request is None
+                else self._pending_request.merged_with(request)
+            )
             self._last_request_at = utc_now()
             self._last_request_source = source
+            self._last_request_reason = reason
+            self._last_request_monotonic = time.monotonic()
 
         if self._loop is not None and self._event is not None:
             self._loop.call_soon_threadsafe(self._event.set)
@@ -115,48 +140,81 @@ class ScanCoordinator:
             self._scan_in_progress = False
             self._last_scan_completed_at = utc_now()
 
-    async def wait_for_next_scan(self, interval_seconds: int) -> bool:
-        if interval_seconds <= 0:
-            return False
-
+    async def wait_for_next_scan(
+        self,
+        interval_seconds: int,
+        allow_event_only: bool = False,
+    ) -> ScanRequest | None:
         event = self._event
         if event is None:
+            if interval_seconds <= 0:
+                return None
             await asyncio.sleep(interval_seconds)
-            return False
+            return None
+
+        if interval_seconds <= 0 and not allow_event_only:
+            return None
 
         while True:
             with self._lock:
-                if self._request_seq != self._handled_request_seq:
-                    self._handled_request_seq = self._request_seq
-                    return True
-                observed_seq = self._request_seq
+                pending_request = self._pending_request
+                last_request_monotonic = self._last_request_monotonic
+
+            if pending_request is not None:
+                remaining_debounce = 0.0
+                if pending_request.source == "k8s_watch":
+                    remaining_debounce = self.scanner_config.event_debounce_seconds - (
+                        time.monotonic() - last_request_monotonic
+                    )
+
+                if remaining_debounce > 0:
+                    event.clear()
+                    try:
+                        await asyncio.wait_for(event.wait(), timeout=remaining_debounce)
+                    except asyncio.TimeoutError:
+                        pass
+                    continue
+
+                with self._lock:
+                    pending_request = self._pending_request
+                    self._pending_request = None
+                return pending_request
+
+            if interval_seconds <= 0:
+                event.clear()
+                await event.wait()
+                continue
 
             event.clear()
-            with self._lock:
-                if self._request_seq != observed_seq:
-                    self._handled_request_seq = self._request_seq
-                    return True
-
             try:
-                # 周期扫描与手动刷新共用同一个等待点。
                 await asyncio.wait_for(event.wait(), timeout=interval_seconds)
             except asyncio.TimeoutError:
-                return False
+                return None
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
+            pending_request = copy.deepcopy(self._pending_request)
             return {
                 "scan_in_progress": self._scan_in_progress,
-                "pending_manual_scan": self._request_seq != self._handled_request_seq,
+                "pending_scan": pending_request is not None,
+                "pending_request_source": pending_request.source if pending_request else None,
+                "pending_request_reason": pending_request.reason if pending_request else None,
+                "pending_request_full_scan": pending_request.full_scan if pending_request else False,
+                "pending_service_ref_count": len(pending_request.service_refs) if pending_request else 0,
+                "pending_pod_ref_count": len(pending_request.pod_refs) if pending_request else 0,
                 "current_mode": "host_exposure" if self._scan_in_progress else None,
                 "last_completed_mode": "host_exposure" if self._last_scan_completed_at else None,
                 "last_scan_started_at": self._last_scan_started_at,
                 "last_scan_completed_at": self._last_scan_completed_at,
                 "last_request_at": self._last_request_at,
                 "last_request_source": self._last_request_source,
+                "last_request_reason": self._last_request_reason,
                 "full_node_tcp_scan": self.scanner_config.full_node_tcp_scan,
                 "full_node_tcp_port_spec": self.scanner_config.full_node_tcp_port_spec,
                 "full_node_tcp_port_count": len(self.scanner_config.full_node_tcp_ports),
+                "watch_kubernetes_events": self.scanner_config.watch_kubernetes_events,
+                "event_watch_timeout_seconds": self.scanner_config.event_watch_timeout_seconds,
+                "event_debounce_seconds": self.scanner_config.event_debounce_seconds,
                 "scan_service_external_ips": self.scanner_config.scan_service_external_ips,
                 "scan_node_ports": self.scanner_config.scan_node_ports,
                 "scan_host_ports": self.scanner_config.scan_host_ports,

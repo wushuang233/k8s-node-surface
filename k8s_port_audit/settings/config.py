@@ -58,11 +58,28 @@ def coerce_port_spec(value: Any) -> str:
     raise ValueError(f"无法解析端口配置: {value!r}")
 
 
+def namespace_allowed(namespace: str | None, scanner_config: "ScannerConfig") -> bool:
+    if not namespace:
+        return True
+
+    include = set(scanner_config.include_namespaces)
+    exclude = set(scanner_config.exclude_namespaces)
+
+    if include and namespace not in include:
+        return False
+    if namespace in exclude:
+        return False
+    return True
+
+
 @dataclass
 class ScannerConfig:
     timeout_seconds: float = 0.5
     concurrency: int = 300
     interval_seconds: int = 0
+    watch_kubernetes_events: bool = True
+    event_watch_timeout_seconds: int = 45
+    event_debounce_seconds: float = 2.0
     output_path: str | None = None
     pretty_json: bool = True
     include_namespaces: list[str] = field(default_factory=list)
@@ -95,6 +112,9 @@ class ScannerConfig:
             timeout_seconds=float(scan.get("timeout_seconds", 0.5)),
             concurrency=int(scan.get("concurrency", 300)),
             interval_seconds=int(scan.get("interval_seconds", 0)),
+            watch_kubernetes_events=bool(scan.get("watch_kubernetes_events", True)),
+            event_watch_timeout_seconds=int(scan.get("event_watch_timeout_seconds", 45)),
+            event_debounce_seconds=float(scan.get("event_debounce_seconds", 2.0)),
             output_path=scan.get("output_path"),
             pretty_json=bool(report.get("pretty_json", True)),
             include_namespaces=coerce_str_list(scope.get("include_namespaces")),
@@ -127,6 +147,10 @@ class ScannerConfig:
             raise ValueError("scan.concurrency 必须大于 0")
         if self.interval_seconds < 0:
             raise ValueError("scan.interval_seconds 不能小于 0")
+        if self.event_watch_timeout_seconds < 10:
+            raise ValueError("scan.event_watch_timeout_seconds 不能小于 10")
+        if self.event_debounce_seconds < 0:
+            raise ValueError("scan.event_debounce_seconds 不能小于 0")
         if self.full_node_tcp_scan and not self.full_node_tcp_ports:
             raise ValueError("ports.full_node_tcp_ports 不能为空")
         if self.traffic_observation_enabled and not self.traffic_observation_host_proc_root.strip():
@@ -141,6 +165,9 @@ class ScannerConfig:
             "timeout_seconds": self.timeout_seconds,
             "concurrency": self.concurrency,
             "interval_seconds": self.interval_seconds,
+            "watch_kubernetes_events": self.watch_kubernetes_events,
+            "event_watch_timeout_seconds": self.event_watch_timeout_seconds,
+            "event_debounce_seconds": self.event_debounce_seconds,
             "output_path": self.output_path,
             "pretty_json": self.pretty_json,
             "include_namespaces": list(self.include_namespaces),

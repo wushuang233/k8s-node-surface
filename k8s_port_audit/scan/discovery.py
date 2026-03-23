@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..domain import DiscoverySnapshot, NodeCandidate, ProbeTarget
-from ..settings import ScannerConfig
+from ..settings.config import ScannerConfig, namespace_allowed
 from .traffic import is_unspecified_address
 
 
@@ -15,17 +15,25 @@ class HostExposureDiscovery:
         self.scanner_config = scanner_config
 
     def namespace_allowed(self, namespace: str | None) -> bool:
-        if not namespace:
+        return namespace_allowed(namespace, self.scanner_config)
+
+    @staticmethod
+    def service_selected(
+        service: Any,
+        service_refs: set[tuple[str, str]] | None,
+    ) -> bool:
+        if not service_refs:
             return True
+        return (service.metadata.namespace, service.metadata.name) in service_refs
 
-        include = set(self.scanner_config.include_namespaces)
-        exclude = set(self.scanner_config.exclude_namespaces)
-
-        if include and namespace not in include:
-            return False
-        if namespace in exclude:
-            return False
-        return True
+    @staticmethod
+    def pod_selected(
+        pod: Any,
+        pod_refs: set[tuple[str, str]] | None,
+    ) -> bool:
+        if not pod_refs:
+            return True
+        return (pod.metadata.namespace, pod.metadata.name) in pod_refs
 
     @staticmethod
     def add_target(
@@ -117,6 +125,7 @@ class HostExposureDiscovery:
         target_map: dict[tuple[str, int], ProbeTarget],
         inventory: dict[str, int],
         node_addresses: list[dict[str, str]],
+        service_refs: set[tuple[str, str]] | None = None,
     ) -> None:
         if not (self.scanner_config.scan_service_external_ips or self.scanner_config.scan_node_ports):
             return
@@ -128,6 +137,8 @@ class HostExposureDiscovery:
         for service in services:
             namespace = service.metadata.namespace
             if not self.namespace_allowed(namespace):
+                continue
+            if not self.service_selected(service, service_refs):
                 continue
 
             inventory["services_eligible"] += 1
@@ -197,6 +208,7 @@ class HostExposureDiscovery:
         target_map: dict[tuple[str, int], ProbeTarget],
         inventory: dict[str, int],
         node_addresses_by_name: dict[str, list[dict[str, str]]],
+        pod_refs: set[tuple[str, str]] | None = None,
     ) -> None:
         if not (self.scanner_config.scan_host_ports or self.scanner_config.scan_host_network_ports):
             return
@@ -208,6 +220,8 @@ class HostExposureDiscovery:
         for pod in pods:
             namespace = pod.metadata.namespace
             if not self.namespace_allowed(namespace):
+                continue
+            if not self.pod_selected(pod, pod_refs):
                 continue
             if pod.status.phase != "Running":
                 continue
@@ -278,7 +292,11 @@ class HostExposureDiscovery:
                             )
                             inventory["host_network_port_targets"] += 1
 
-    def discover(self) -> DiscoverySnapshot:
+    def discover(
+        self,
+        service_refs: set[tuple[str, str]] | None = None,
+        pod_refs: set[tuple[str, str]] | None = None,
+    ) -> DiscoverySnapshot:
         inventory = self.build_inventory_template()
         target_map: dict[tuple[str, int], ProbeTarget] = {}
 
@@ -286,8 +304,13 @@ class HostExposureDiscovery:
         node_candidates = self.build_node_candidates(node_addresses)
         node_addresses_by_name = self.index_node_addresses(node_addresses)
 
-        self.collect_service_targets(target_map, inventory, node_addresses)
-        self.collect_pod_targets(target_map, inventory, node_addresses_by_name)
+        self.collect_service_targets(target_map, inventory, node_addresses, service_refs=service_refs)
+        self.collect_pod_targets(
+            target_map,
+            inventory,
+            node_addresses_by_name,
+            pod_refs=pod_refs,
+        )
 
         inventory["unique_targets"] = len(target_map)
         targets = sorted(target_map.values(), key=lambda item: (item.address, item.port))

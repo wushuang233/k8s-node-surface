@@ -5,6 +5,24 @@ from typing import Any, TypedDict
 
 
 @dataclass
+class ScanRequest:
+    source: str
+    reason: str | None = None
+    full_scan: bool = True
+    service_refs: set[tuple[str, str]] = field(default_factory=set)
+    pod_refs: set[tuple[str, str]] = field(default_factory=set)
+
+    def merged_with(self, other: "ScanRequest") -> "ScanRequest":
+        return ScanRequest(
+            source=other.source,
+            reason=other.reason or self.reason,
+            full_scan=self.full_scan or other.full_scan,
+            service_refs=set(self.service_refs) | set(other.service_refs),
+            pod_refs=set(self.pod_refs) | set(other.pod_refs),
+        )
+
+
+@dataclass
 class ProbeTarget:
     address: str
     port: int

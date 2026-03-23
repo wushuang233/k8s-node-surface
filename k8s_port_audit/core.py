@@ -4,8 +4,8 @@
 """
 
 from .report import emit_report, utc_now
-from .runtime import ReportStore, ScanCoordinator
-from .scan import HostExposureScanner
+from .runtime.state import ReportStore, ScanCoordinator
+from .scan.scanner import HostExposureScanner
 
 __all__ = [
     "HostExposureScanner",

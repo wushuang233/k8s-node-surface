@@ -7,6 +7,7 @@ from .models import (
     NodeCandidate,
     ProbeResult,
     ProbeTarget,
+    ScanRequest,
     TargetSource,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "NodeCandidate",
     "ProbeResult",
     "ProbeTarget",
+    "ScanRequest",
     "TargetSource",
 ]

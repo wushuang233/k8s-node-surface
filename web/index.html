@@ -14,14 +14,11 @@
           <p class="eyebrow">宿主机暴露端口审计</p>
           <h1>宿主机暴露端口面板</h1>
           <p class="hero-text">
-            汇总宿主机地址上的 TCP 暴露端口，并提供 Kubernetes 归因与证据标记。
+            只保留宿主机地址上可直接关注的 TCP 暴露端口，并补充 Kubernetes 归因和流量证据。
           </p>
           <div class="hero-tags">
             <span class="badge badge-primary">节点扫描</span>
-            <span class="badge">NodePort</span>
-            <span class="badge">LoadBalancer</span>
-            <span class="badge">HostPort</span>
-            <span class="badge">HostNetwork</span>
+            <span class="badge">Kubernetes 归因</span>
             <span class="badge badge-alert">流量证据</span>
           </div>
         </div>
@@ -97,55 +94,31 @@
           <input id="search-input" type="search" placeholder="按节点、对象、地址或端口检索" />
         </div>
         <div class="control-block action-block">
-          <label for="scan-now-button">刷新</label>
+          <label for="scan-now-button">手动刷新</label>
           <button id="scan-now-button" type="button">立即刷新</button>
           <p id="scan-state-note" class="control-note">等待状态更新</p>
         </div>
       </section>
 
-      <section class="analysis-grid">
-        <section class="panel method-panel">
-          <div class="section-head">
-            <div>
-              <p class="section-kicker">方法</p>
-              <h2>判定逻辑</h2>
-            </div>
-          </div>
-          <p id="method-focus" class="method-focus">仅保留宿主机地址上的 TCP 暴露面。</p>
-          <div class="method-columns">
-            <div>
-              <h3>扫描步骤</h3>
-              <ul id="method-steps" class="method-list"></ul>
-            </div>
-            <div>
-              <h3>限制</h3>
-              <ul id="method-limits" class="method-list method-list-warn"></ul>
-            </div>
-          </div>
-        </section>
-
-        <section class="panel legend-panel">
-          <div class="section-head">
-            <div>
-              <p class="section-kicker">证据</p>
-              <h2>证据说明</h2>
-            </div>
-          </div>
-          <div class="legend-list">
-            <div class="legend-item">
-              <span class="badge badge-alert">流量</span>
-              <p>检测到活跃连接。</p>
-            </div>
-            <div class="legend-item">
-              <span class="badge badge-muted">监听</span>
-              <p>检测到监听状态。</p>
-            </div>
-            <div class="legend-item">
-              <span class="badge badge-primary">open</span>
-              <p>主动 TCP 建连成功。</p>
-            </div>
-          </div>
-        </section>
+      <section class="panel view-tabs">
+        <div class="tab-list" id="view-tab-list">
+          <button type="button" class="view-tab is-active" data-tab="all">
+            <span>总览</span>
+            <strong id="tab-count-all">0</strong>
+          </button>
+          <button type="button" class="view-tab" data-tab="service">
+            <span>服务暴露</span>
+            <strong id="tab-count-service">0</strong>
+          </button>
+          <button type="button" class="view-tab" data-tab="host">
+            <span>主机端口</span>
+            <strong id="tab-count-host">0</strong>
+          </button>
+          <button type="button" class="view-tab" data-tab="listener">
+            <span>节点监听</span>
+            <strong id="tab-count-listener">0</strong>
+          </button>
+        </div>
       </section>
 
       <section class="section-stack">
@@ -153,7 +126,7 @@
           <div class="section-head">
             <div>
               <p class="section-kicker">节点</p>
-              <h2>节点暴露面</h2>
+              <h2>节点与地址</h2>
             </div>
             <span class="section-note" id="node-count-note">节点 0 个</span>
           </div>
@@ -164,7 +137,7 @@
           <div class="section-head">
             <div>
               <p class="section-kicker">对象</p>
-              <h2>对象分组</h2>
+              <h2>归因对象</h2>
             </div>
             <span class="section-note" id="group-count-note">对象 0 个</span>
           </div>
@@ -176,7 +149,7 @@
             <summary class="table-summary details-summary">
               <div>
                 <p class="section-kicker">明细</p>
-                <h2 class="table-panel-title">暴露明细</h2>
+                <h2 class="table-panel-title">暴露端口明细</h2>
               </div>
               <span class="section-note" id="table-toggle-note">0 条记录</span>
             </summary>
@@ -184,13 +157,12 @@
               <table>
                 <thead>
                   <tr>
-                    <th>对象</th>
-                    <th>节点</th>
-                    <th>分类</th>
                     <th>目标</th>
+                    <th>归因对象</th>
+                    <th>节点</th>
                     <th>状态</th>
                     <th>证据</th>
-                    <th>说明</th>
+                    <th>补充</th>
                   </tr>
                 </thead>
                 <tbody id="result-table-body"></tbody>

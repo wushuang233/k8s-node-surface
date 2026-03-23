@@ -2,6 +2,9 @@ scan:
   timeout_seconds: 0.5
   concurrency: 300
   interval_seconds: 3600
+  watch_kubernetes_events: true
+  event_watch_timeout_seconds: 45
+  event_debounce_seconds: 2
   output_path: /tmp/k8s-port-report.json
 
 scope:
@@ -30,4 +33,4 @@ web:
   enabled: true
   host: 0.0.0.0
   port: 8080
-  refresh_seconds: 15
+  refresh_seconds: 8

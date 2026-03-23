@@ -1,4 +1,4 @@
-import { buildExposureState, emptyState, filterState } from "./app-data.js";
+import { buildExposureState, emptyState, filterState, listTabs, typeFilterOptions } from "./app-data.js";
 import { createRenderer } from "./app-render.js";
 
 const refs = {
@@ -8,6 +8,7 @@ const refs = {
   emptyStateTemplate: document.querySelector("#empty-state-template"),
   scanNowButton: document.querySelector("#scan-now-button"),
   scanStateNote: document.querySelector("#scan-state-note"),
+  tabButtons: Array.from(document.querySelectorAll(".view-tab")),
   errorBanner: document.querySelector("#error-banner"),
   clusterConnection: document.querySelector("#cluster-connection"),
   scanMode: document.querySelector("#scan-mode"),
@@ -19,9 +20,6 @@ const refs = {
   statResourceCount: document.querySelector("#stat-resource-count"),
   statAddressCount: document.querySelector("#stat-address-count"),
   statItemCount: document.querySelector("#stat-item-count"),
-  methodFocus: document.querySelector("#method-focus"),
-  methodSteps: document.querySelector("#method-steps"),
-  methodLimits: document.querySelector("#method-limits"),
   nodeCountNote: document.querySelector("#node-count-note"),
   nodeSurfaceList: document.querySelector("#node-surface-list"),
   groupCountNote: document.querySelector("#group-count-note"),
@@ -39,6 +37,7 @@ const state = {
   refreshTimer: null,
   scanRequestInFlight: false,
   tableExpanded: true,
+  activeTab: "all",
 };
 
 function readFilters() {
@@ -49,7 +48,7 @@ function readFilters() {
   };
 }
 
-function renderTypeFilter(viewState) {
+function renderTypeFilter(viewState, activeTab) {
   const currentValue = refs.typeFilter.value;
   refs.typeFilter.innerHTML = "";
 
@@ -58,15 +57,28 @@ function renderTypeFilter(viewState) {
   allOption.textContent = "全部";
   refs.typeFilter.appendChild(allOption);
 
-  viewState.filterOptions.forEach((option) => {
+  typeFilterOptions(viewState, activeTab).forEach((option) => {
     const node = document.createElement("option");
     node.value = option.value;
     node.textContent = option.label;
     refs.typeFilter.appendChild(node);
   });
 
-  const optionValues = new Set(["all", ...viewState.filterOptions.map((item) => item.value)]);
+  const optionValues = new Set(["all", ...typeFilterOptions(viewState, activeTab).map((item) => item.value)]);
   refs.typeFilter.value = optionValues.has(currentValue) ? currentValue : "all";
+}
+
+function renderTabs(viewState) {
+  const tabs = new Map(listTabs(viewState).map((tab) => [tab.id, tab]));
+  refs.tabButtons.forEach((button) => {
+    const tabId = button.dataset.tab || "all";
+    const tab = tabs.get(tabId);
+    const countNode = button.querySelector("strong");
+    if (countNode && tab) {
+      countNode.textContent = String(tab.count);
+    }
+    button.classList.toggle("is-active", state.activeTab === tabId);
+  });
 }
 
 function renderPage() {
@@ -74,12 +86,12 @@ function renderPage() {
     return;
   }
 
-  const filteredState = filterState(state.exposureState, readFilters());
+  const filteredState = filterState(state.exposureState, readFilters(), state.activeTab);
   renderer.renderHero(state.dashboardPayload);
   renderer.renderError(state.dashboardPayload);
   renderer.renderScanState(state.dashboardPayload, state.scanRequestInFlight);
-  renderer.renderMethodology(state.dashboardPayload);
-  renderTypeFilter(state.exposureState);
+  renderTypeFilter(state.exposureState, state.activeTab);
+  renderTabs(state.exposureState);
   renderer.renderSummary(filteredState.summary);
   renderer.renderNodes(filteredState.nodeGroups);
   renderer.renderGroups(filteredState.groups);
@@ -145,6 +157,12 @@ refs.statusFilter.addEventListener("change", rerender);
 refs.typeFilter.addEventListener("change", rerender);
 refs.searchInput.addEventListener("input", rerender);
 refs.scanNowButton.addEventListener("click", triggerScan);
+refs.tabButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    state.activeTab = button.dataset.tab || "all";
+    renderPage();
+  });
+});
 refs.resultTableDetails.addEventListener("toggle", () => {
   state.tableExpanded = refs.resultTableDetails.open;
 });

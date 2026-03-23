@@ -1,4 +1,10 @@
-import { buildItemNote, escapeHtml, formatLatency, statusClass } from "./app-data.js";
+import {
+  buildItemNote,
+  buildTableSupplement,
+  escapeHtml,
+  formatLatency,
+  statusClass,
+} from "./app-data.js";
 
 function evidenceKeyword(item) {
   if (item.trafficObserved) {
@@ -12,9 +18,23 @@ function evidenceKeyword(item) {
 
 function renderTrafficBadge(count) {
   if (!count) {
-    return '<span class="badge badge-muted">无流量证据</span>';
+    return "";
   }
   return `<span class="badge badge-alert">流量 ${escapeHtml(count)}</span>`;
+}
+
+function renderLabelBadges(labels, maxVisible = 3) {
+  if (!labels.length) {
+    return '<span class="badge badge-muted">无归因</span>';
+  }
+
+  const visible = labels.slice(0, maxVisible);
+  const rest = labels.length - visible.length;
+  const badges = visible.map((label) => `<span class="badge">${escapeHtml(label)}</span>`);
+  if (rest > 0) {
+    badges.push(`<span class="badge badge-muted">+${escapeHtml(rest)}</span>`);
+  }
+  return badges.join("");
 }
 
 function renderPortChip(item) {
@@ -51,9 +71,7 @@ function renderAddressGroup(addressGroup) {
 }
 
 export function renderNodeCard(node) {
-  const typeBadges = node.typeLabels.length
-    ? node.typeLabels.map((label) => `<span class="badge">${escapeHtml(label)}</span>`).join("")
-    : '<span class="badge badge-muted">无记录</span>';
+  const typeBadges = renderLabelBadges(node.typeLabels);
 
   const addressBlocks = node.addressGroups.map(renderAddressGroup).join("");
 
@@ -81,7 +99,7 @@ function renderGroupItem(item) {
     <div class="item-row compact-row">
       <div class="item-row-main">
         <div class="item-target">${escapeHtml(item.address)}:${escapeHtml(item.port)}</div>
-        <div class="service-meta">${escapeHtml(note || "-")}</div>
+        <div class="service-meta">${escapeHtml(note || item.nodeName || "-")}</div>
       </div>
       <div class="badge-row compact-badges">
         <span class="badge">${escapeHtml(item.typeLabel)}</span>
@@ -92,14 +110,6 @@ function renderGroupItem(item) {
               ? '<span class="badge badge-muted">监听</span>'
               : ""
         }
-        ${
-          item.nodeName
-            ? `<span class="badge badge-muted">${escapeHtml(item.nodeName)}</span>`
-            : item.container
-              ? `<span class="badge badge-muted">${escapeHtml(item.container)}</span>`
-              : ""
-        }
-        <span class="badge badge-muted">${escapeHtml(formatLatency(item.latencyMs))}</span>
         <span class="${statusClass(item.status)}">${escapeHtml(item.status)}</span>
       </div>
     </div>
@@ -107,9 +117,7 @@ function renderGroupItem(item) {
 }
 
 export function renderGroupCard(group) {
-  const typeBadges = group.typeLabels
-    .map((label) => `<span class="badge">${escapeHtml(label)}</span>`)
-    .join("");
+  const typeBadges = renderLabelBadges(group.typeLabels);
   const evidenceBadge = renderTrafficBadge(group.trafficTargetCount);
   const itemRows = group.items.map(renderGroupItem).join("");
 
@@ -133,20 +141,42 @@ export function renderGroupCard(group) {
 }
 
 export function renderTableRow(item) {
-  const evidence = item.trafficObserved
-    ? `流量 ${item.observedStates.join(", ") || item.observedSampleCount}`
-    : item.listenerObserved
-      ? "监听"
-      : "-";
+  const evidenceBadges = [
+    `<span class="badge">${escapeHtml(item.typeLabel)}</span>`,
+    item.trafficObserved
+      ? `<span class="badge badge-alert">流量 ${escapeHtml(
+          item.observedStates.join(", ") || item.observedSampleCount || "-"
+        )}</span>`
+      : item.listenerObserved
+        ? '<span class="badge badge-muted">监听</span>'
+        : '<span class="badge badge-muted">主动探测</span>',
+  ].join("");
   const objectLabel = item.namespace === "-" ? item.resourceName : `${item.namespace}/${item.resourceName}`;
+  const objectMeta = [item.kindLabel, item.serviceType].filter(Boolean).join(" · ") || item.typeLabel;
+  const supplement = buildTableSupplement(item) || "-";
 
   return `
-    <td class="compact-cell">${escapeHtml(objectLabel)}</td>
-    <td class="compact-cell">${escapeHtml(item.nodeName || "-")}</td>
-    <td class="compact-cell">${escapeHtml(item.typeLabel)}</td>
-    <td class="compact-cell"><span class="item-target">${escapeHtml(item.address)}:${escapeHtml(item.port)}</span></td>
-    <td class="compact-cell"><span class="${statusClass(item.status)}">${escapeHtml(item.status)}</span></td>
-    <td class="compact-cell">${escapeHtml(evidence)}</td>
-    <td class="compact-cell note-cell">${escapeHtml(buildItemNote(item, false) || "-")}</td>
+    <td class="compact-cell target-cell">
+      <div class="cell-primary item-target">${escapeHtml(item.address)}:${escapeHtml(item.port)}</div>
+      <div class="cell-secondary">${escapeHtml(item.portName || "-")}</div>
+    </td>
+    <td class="compact-cell object-cell">
+      <div class="cell-primary">${escapeHtml(objectLabel)}</div>
+      <div class="cell-secondary">${escapeHtml(objectMeta)}</div>
+    </td>
+    <td class="compact-cell node-cell">
+      <div class="cell-primary">${escapeHtml(item.nodeName || "-")}</div>
+      <div class="cell-secondary">${escapeHtml(item.container || "-")}</div>
+    </td>
+    <td class="compact-cell status-cell">
+      <span class="${statusClass(item.status)}">${escapeHtml(item.status)}</span>
+      <div class="cell-secondary">${escapeHtml(formatLatency(item.latencyMs))}</div>
+    </td>
+    <td class="compact-cell evidence-cell">
+      <div class="badge-row table-badges">${evidenceBadges}</div>
+    </td>
+    <td class="compact-cell note-cell">
+      <div class="cell-secondary">${escapeHtml(supplement)}</div>
+    </td>
   `;
 }

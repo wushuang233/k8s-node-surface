@@ -9,12 +9,13 @@ except ModuleNotFoundError:
     MISSING_MODULES.append("PyYAML")
 
 try:
-    from kubernetes import client, config
+    from kubernetes import client, config, watch
     from kubernetes.client.exceptions import ApiException
     from kubernetes.config.config_exception import ConfigException
 except ModuleNotFoundError:
     client = None
     config = None
+    watch = None
     ApiException = Exception
     ConfigException = Exception
     MISSING_MODULES.append("kubernetes")

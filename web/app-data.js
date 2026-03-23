@@ -25,6 +25,25 @@ const STATUS_PRIORITY = {
   error: 4,
 };
 
+const TAB_META = {
+  all: {
+    label: "总览",
+    matches: () => true,
+  },
+  service: {
+    label: "服务暴露",
+    matches: (item) => ["external_ip", "load_balancer", "node_port"].includes(item.typeValue),
+  },
+  host: {
+    label: "主机端口",
+    matches: (item) => ["host_port", "host_network_pod"].includes(item.typeValue),
+  },
+  listener: {
+    label: "节点监听",
+    matches: (item) => item.typeValue === "node_listener",
+  },
+};
+
 // 后端返回的结构偏向报告存储；这里统一转换为前端视图模型。
 
 export function emptyState() {
@@ -77,6 +96,30 @@ export function formatScanMode(mode) {
     return "宿主机暴露扫描";
   }
   return "待执行";
+}
+
+export function listTabs(viewState) {
+  return Object.entries(TAB_META).map(([id, meta]) => ({
+    id,
+    label: meta.label,
+    count: viewState.items.filter((item) => meta.matches(item)).length,
+  }));
+}
+
+export function typeFilterOptions(viewState, activeTab = "all") {
+  const tabMatcher = TAB_META[activeTab]?.matches || TAB_META.all.matches;
+  const typeMap = new Map();
+  viewState.items
+    .filter((item) => tabMatcher(item))
+    .forEach((item) => typeMap.set(item.typeValue, item.typeLabel));
+
+  return [...typeMap.entries()]
+    .map(([value, label]) => ({ value, label }))
+    .sort(
+      (left, right) =>
+        (TYPE_PRIORITY[left.value] ?? 99) - (TYPE_PRIORITY[right.value] ?? 99) ||
+        left.label.localeCompare(right.label)
+    );
 }
 
 function typeMeta(typeLabel) {
@@ -134,37 +177,50 @@ export function buildItemNote(item, includeObjectName = false) {
   if (includeObjectName && item.resourceName !== item.groupName) {
     parts.push(item.resourceName);
   }
-  if (item.kindLabel) {
-    parts.push(item.kindLabel);
-  }
-  if (item.serviceType) {
+  if (item.kindLabel === "Service" && item.serviceType) {
     parts.push(item.serviceType);
   }
   if (item.portName) {
-    parts.push(`port ${item.portName}`);
+    parts.push(`端口 ${item.portName}`);
   }
   if (item.targetPort) {
     parts.push(`target ${item.targetPort}`);
   }
-  if (item.nodeName) {
-    parts.push(`node ${item.nodeName}`);
-  }
   if (item.container) {
-    parts.push(`container ${item.container}`);
+    parts.push(`容器 ${item.container}`);
   }
   if (item.trafficObserved && item.observedStates.length) {
-    parts.push(`流量状态 ${item.observedStates.join(", ")}`);
+    parts.push(`流量 ${item.observedStates.join(", ")}`);
   } else if (item.listenerObserved) {
-    parts.push("发现监听");
+    parts.push("监听");
   }
   if (item.error) {
     parts.push(item.error);
   }
-  if (item.note) {
+
+  return parts.join(" · ");
+}
+
+export function buildTableSupplement(item) {
+  const parts = [];
+
+  if (item.portName) {
+    parts.push(`端口 ${item.portName}`);
+  }
+  if (item.targetPort) {
+    parts.push(`target ${item.targetPort}`);
+  }
+  if (item.container) {
+    parts.push(`容器 ${item.container}`);
+  }
+  if (item.resourceName !== item.groupName) {
+    parts.push(item.resourceName);
+  }
+  if (!parts.length && item.note) {
     parts.push(item.note);
   }
 
-  return parts.join(" / ");
+  return parts.join(" · ");
 }
 
 function normalizeItems(externalSummary) {
@@ -416,8 +472,12 @@ export function buildExposureState(externalSummary) {
   });
 }
 
-export function filterState(viewState, filters) {
+export function filterState(viewState, filters, activeTab = "all") {
+  const tabMatcher = TAB_META[activeTab]?.matches || TAB_META.all.matches;
   const filteredItems = viewState.items.filter((item) => {
+    if (!tabMatcher(item)) {
+      return false;
+    }
     if (filters.status !== "all" && item.status !== filters.status) {
       return false;
     }
@@ -431,6 +491,7 @@ export function filterState(viewState, filters) {
   });
 
   const showEmptyNodes =
+    activeTab === "all" &&
     filters.status === "all" &&
     filters.typeValue === "all" &&
     !filters.query;
