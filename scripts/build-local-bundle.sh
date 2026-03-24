@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 VERSION="$(head -n 1 "${ROOT_DIR}/VERSION" | tr -d '[:space:]')"
 IMAGE="local/k8s-port-audit:${VERSION}"
+BASE_IMAGE="${BASE_IMAGE:-python:3.13-slim}"
 BUNDLE_DIR="${ROOT_DIR}/dist/k8s-port-audit-local-${VERSION}"
 TAR_PATH="${BUNDLE_DIR}/k8s-port-audit-${VERSION}.tar"
 MANIFEST_SOURCE="${ROOT_DIR}/manifests/k8s-port-audit-local.yaml"
@@ -38,7 +39,12 @@ fi
 docker info >/dev/null
 
 if [[ "${SKIP_DOCKER_BUILD:-0}" != "1" ]]; then
-  DOCKER_BUILDKIT=1 docker build --build-arg HTTP_PROXY= --build-arg HTTPS_PROXY= -t "${IMAGE}" "${ROOT_DIR}"
+  DOCKER_BUILDKIT=1 docker build \
+    --build-arg BASE_IMAGE="${BASE_IMAGE}" \
+    --build-arg HTTP_PROXY= \
+    --build-arg HTTPS_PROXY= \
+    -t "${IMAGE}" \
+    "${ROOT_DIR}"
 else
   docker image inspect "${IMAGE}" >/dev/null
 fi

@@ -1,7 +1,4 @@
-import {
-  formatScanMode,
-  formatTime,
-} from "./app-data.js";
+import { formatScanMode, formatTime } from "./app-data.js";
 import { renderGroupCard, renderNodeCard, renderTableRow } from "./render-fragments.js";
 
 export function createRenderer(refs) {
@@ -61,54 +58,27 @@ export function createRenderer(refs) {
     const notes = [];
 
     if (scanState.scan_in_progress) {
-      notes.push(`执行中：${formatScanMode(scanState.current_mode)}`);
+      notes.push("扫描中");
     } else if (scanState.last_completed_mode) {
-      notes.push(`最近完成：${formatScanMode(scanState.last_completed_mode)}`);
+      notes.push("已完成");
     }
 
     if (scanState.pending_scan) {
       notes.push(
         scanState.pending_request_source === "manual"
-          ? "手动刷新已排队"
-          : "检测到变更，等待自动刷新"
+          ? "手动已排队"
+          : "变更待刷新"
       );
     }
 
     if (scanState.full_node_tcp_scan) {
-      notes.push(`节点扫描范围 ${scanState.full_node_tcp_port_spec}`);
-    }
-
-    if (scanState.watch_kubernetes_events) {
-      notes.push("事件触发刷新已启用");
-    }
-
-    const enabledSources = [];
-    if (scanState.scan_service_external_ips) {
-      enabledSources.push("ExternalIP/LoadBalancer");
-    }
-    if (scanState.scan_node_ports) {
-      enabledSources.push("NodePort");
-    }
-    if (scanState.scan_host_ports) {
-      enabledSources.push("HostPort");
-    }
-    if (scanState.scan_host_network_ports) {
-      enabledSources.push("HostNetwork");
-    }
-    if (enabledSources.length) {
-      notes.push(`归因 ${enabledSources.join(" + ")}`);
+      notes.push(`节点 ${scanState.full_node_tcp_port_spec}`);
     }
 
     if (trafficObservation.available) {
-      notes.push(
-        `流量证据 ${trafficObservation.matched_result_count || 0} 条，活跃 ${trafficObservation.active_traffic_target_count || 0} 条`
-      );
+      notes.push(`流量 ${trafficObservation.matched_result_count || 0}/${trafficObservation.active_traffic_target_count || 0}`);
     } else if (scanState.traffic_observation_enabled && trafficObservation.error) {
-      notes.push(`流量证据不可用：${trafficObservation.error}`);
-    }
-
-    if (scanState.last_request_source === "k8s_watch" && scanState.last_request_reason) {
-      notes.push(`最近变更 ${scanState.last_request_reason}`);
+      notes.push("流量不可用");
     }
 
     refs.scanStateNote.textContent = notes.join(" · ") || "等待状态更新";

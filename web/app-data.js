@@ -35,7 +35,7 @@ const TAB_META = {
     matches: (item) => ["external_ip", "load_balancer", "node_port"].includes(item.typeValue),
   },
   host: {
-    label: "主机端口",
+    label: "Pod 映射",
     matches: (item) => ["host_port", "host_network_pod"].includes(item.typeValue),
   },
   listener: {
@@ -243,6 +243,7 @@ function normalizeItems(externalSummary) {
       portName: item.port_name || "",
       targetPort: item.target_port || "",
       serviceType: item.service_type || "",
+      platformRole: item.platform_role || "",
       note: item.note || "",
       discoveryPaths: item.discovery_paths || [],
       relatedObjects: item.related_objects || [],
@@ -251,6 +252,9 @@ function normalizeItems(externalSummary) {
       observedStates: item.observed_states || [],
       observedSampleCount: Number(item.observed_sample_count || 0),
     };
+    // NodeListener 是宿主机直接暴露面。即使后端以后给它补充了系统提示，也不应该被“隐藏系统组件”按钮藏掉。
+    normalized.platformComponent =
+      Boolean(normalized.platformRole) && normalized.kindLabel !== "Node";
     normalized.searchText = buildSearchText(normalized);
     return normalized;
   });
@@ -472,7 +476,19 @@ export function buildExposureState(externalSummary) {
   });
 }
 
-export function filterState(viewState, filters, activeTab = "all") {
+export function applyPlatformVisibility(viewState, showPlatformComponents = true) {
+  if (showPlatformComponents) {
+    return viewState;
+  }
+
+  return buildState(
+    viewState.items.filter((item) => !item.platformComponent),
+    viewState.nodeInventory,
+    { showEmptyNodes: false },
+  );
+}
+
+export function filterState(viewState, filters, activeTab = "all", options = {}) {
   const tabMatcher = TAB_META[activeTab]?.matches || TAB_META.all.matches;
   const filteredItems = viewState.items.filter((item) => {
     if (!tabMatcher(item)) {
@@ -491,6 +507,7 @@ export function filterState(viewState, filters, activeTab = "all") {
   });
 
   const showEmptyNodes =
+    options.showEmptyNodesOnAll !== false &&
     activeTab === "all" &&
     filters.status === "all" &&
     filters.typeValue === "all" &&

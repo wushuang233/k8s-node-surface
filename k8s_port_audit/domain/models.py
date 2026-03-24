@@ -55,6 +55,7 @@ class TargetSource(TypedDict, total=False):
     port_name: str | None
     target_port: str | None
     address_type: str | None
+    labels: dict[str, str]
 
 
 class ProbeResult(TypedDict, total=False):
@@ -88,13 +89,17 @@ class ExposureCandidate(TypedDict, total=False):
     node_name: str | None
     container: str | None
     reason: str | None
+    platform_role: str | None
     traffic_observed: bool
     listener_observed: bool
     observed_states: list[str]
     observed_sample_count: int
+    labels: dict[str, str]
 
 
 class ExposureItem(ExposureCandidate, total=False):
     discovery_paths: list[str]
     related_objects: list[str]
+    platform_roles: list[str]
+    business_candidate_present: bool
     note: str

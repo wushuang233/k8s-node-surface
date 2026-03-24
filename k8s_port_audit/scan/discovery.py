@@ -157,6 +157,7 @@ class HostExposureDiscovery:
                     "namespace": namespace,
                     "name": service.metadata.name,
                     "service_type": service_type,
+                    "labels": dict(getattr(service.metadata, "labels", None) or {}),
                     "port_name": port_def.name,
                     "target_port": str(port_def.target_port) if port_def.target_port is not None else None,
                 }
@@ -260,6 +261,7 @@ class HostExposureDiscovery:
                                     "kind": "pod",
                                     "namespace": namespace,
                                     "name": pod.metadata.name,
+                                    "labels": dict(getattr(pod.metadata, "labels", None) or {}),
                                     "container": container.name,
                                     "node_name": node_name,
                                     "reason": "pod_host_port",
@@ -284,6 +286,7 @@ class HostExposureDiscovery:
                                     "kind": "pod",
                                     "namespace": namespace,
                                     "name": pod.metadata.name,
+                                    "labels": dict(getattr(pod.metadata, "labels", None) or {}),
                                     "container": container.name,
                                     "node_name": node_name,
                                     "reason": "host_network_pod_port",

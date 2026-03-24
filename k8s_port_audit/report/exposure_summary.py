@@ -6,6 +6,7 @@ from typing import Any
 
 from ..domain import ExposureCandidate, ExposureItem, ProbeResult, TargetSource
 from .exposure import exposure_priority, exposure_type_for_reason, status_priority
+from .platform import platform_role_for_candidate
 
 
 def build_exposure_items(results: list[ProbeResult]) -> list[ExposureItem]:
@@ -179,7 +180,7 @@ def build_exposure_candidate(
     resource_name = source.get("name") or source.get("service_name") or source.get("node_name") or "-"
     group_name = source.get("service_name") or resource_name
 
-    return ExposureCandidate(
+    candidate = ExposureCandidate(
         namespace=namespace,
         resource_kind=resource_kind,
         resource_name=resource_name,
@@ -200,7 +201,10 @@ def build_exposure_candidate(
         listener_observed=bool(result.get("listener_observed")),
         observed_states=list(result.get("observed_states") or []),
         observed_sample_count=int(result.get("observed_sample_count") or 0),
+        labels=dict(source.get("labels") or {}),
     )
+    candidate["platform_role"] = platform_role_for_candidate(candidate)
+    return candidate
 
 
 def select_primary_candidate(candidates: list[ExposureCandidate]) -> ExposureCandidate:
@@ -233,6 +237,7 @@ def promote_primary_candidate(item: ExposureItem, candidate: ExposureCandidate) 
         "node_name",
         "container",
         "reason",
+        "platform_role",
     ):
         item[field_name] = candidate.get(field_name)
 
@@ -257,6 +262,7 @@ def merge_candidate_relationships(
 ) -> None:
     discovery_paths = item.setdefault("discovery_paths", [])
     related_objects = item.setdefault("related_objects", [])
+    platform_roles = item.setdefault("platform_roles", [])
 
     for candidate in candidates:
         exposure_type = candidate.get("exposure_type")
@@ -267,12 +273,28 @@ def merge_candidate_relationships(
         if related_object not in related_objects:
             related_objects.append(related_object)
 
+        platform_role = candidate.get("platform_role")
+        if platform_role:
+            if platform_role not in platform_roles:
+                platform_roles.append(platform_role)
+        elif candidate.get("resource_kind") != "Node":
+            # NodeListener 是宿主机直接暴露面的旁路证据，不应把已经命中的系统组件标记冲掉。
+            item["business_candidate_present"] = True
+
 
 def finalize_item(item: ExposureItem) -> None:
     discovery_paths = item.setdefault("discovery_paths", [])
     related_objects = item.setdefault("related_objects", [])
+    platform_roles = item.setdefault("platform_roles", [])
     discovery_paths.sort(key=exposure_priority)
     related_objects.sort()
+    platform_roles.sort()
+
+    if item.pop("business_candidate_present", False) or not platform_roles:
+        item["platform_role"] = None
+        item["platform_roles"] = []
+    elif item.get("platform_role") not in platform_roles:
+        item["platform_role"] = platform_roles[0]
 
     note_parts = [
         ", ".join(discovery_paths),

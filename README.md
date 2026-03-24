@@ -66,6 +66,58 @@
 - `HostPort / HostNetworkPod` 对应 `Pod.spec.containers[].ports`
 - 无法匹配到明确对象时归类为 `NodeListener`
 
+### 2.1 Kubernetes 系统组件判定
+
+页面里的“隐藏 K8s 系统组件”不再依赖前端关键字猜测，而是由后端统一计算 `platformRole`。
+
+判定顺序：
+
+- 如果对象位于 `kube-system`，直接赋值 `platformRole`
+- 如果对象命中明确的系统标签，也会赋值 `platformRole`
+- 如果对象命中明确的系统组件名，也会赋值 `platformRole`
+- 如果命中环境变量 `NV_SYSTEM_GROUPS` 追加规则，也会赋值 `platformRole`
+- 如果以上都没命中，`platformRole` 为空，按普通业务对象处理
+
+页面按钮的判断只有一句话：
+
+- `platformRole != 空`：当前会被当作 K8s 系统组件隐藏对象
+- `platformRole == 空`：业务对象
+
+补充说明：
+
+- `NodeListener` 代表宿主机地址上直接扫到的监听端口，仍然属于攻击面
+- “隐藏 K8s 系统组件”按钮默认不会隐藏这类节点监听项
+
+`NV_SYSTEM_GROUPS` 支持补充规则，格式示例：
+
+```text
+security-platform=security-system/*,mesh=mesh-system/*,kube-system
+```
+
+含义：
+
+- `role=namespace/*`：整个 namespace 算系统组件
+- `role=namespace/name-pattern`：只匹配指定对象名模式
+- `mesh-system`：未显式写 role 时，使用默认平台角色
+
+当前内置的强信号包括：
+
+- `kube-system`
+- 明确系统标签
+  - `k8s-app=kube-dns`
+  - `k8s-app=metrics-server`
+  - `k8s-app=kube-proxy`
+  - `component=kube-apiserver|kube-scheduler|kube-controller-manager|etcd`
+- 明确系统组件名
+  - `coredns`
+  - `kube-dns`
+  - `metrics-server`
+  - `kube-proxy`
+  - `kube-apiserver`
+  - `kube-scheduler`
+  - `kube-controller-manager`
+  - `etcd`
+
 核心文件：
 
 - [k8s_port_audit/scan/discovery.py](k8s_port_audit/scan/discovery.py)
@@ -132,6 +184,7 @@
 │   ├── report/
 │   │   ├── __init__.py
 │   │   ├── exposure.py
+│   │   ├── platform.py
 │   │   ├── exposure_summary.py
 │   │   └── reporting.py
 │   ├── runtime/
@@ -164,7 +217,7 @@
 │   ├── render-fragments.js
 │   └── styles.css
 └── dist/
-    └── k8s-port-audit-local-0.1.9/
+    └── k8s-port-audit-local-0.2.1/
 ```
 
 ## 模块说明
@@ -180,6 +233,7 @@
 - [k8s_port_audit/scan/probe.py](k8s_port_audit/scan/probe.py)：异步 TCP 探测与状态分类
 - [k8s_port_audit/scan/traffic.py](k8s_port_audit/scan/traffic.py)：`/proc` TCP 证据解析
 - [k8s_port_audit/report/exposure.py](k8s_port_audit/report/exposure.py)：暴露类型、优先级与状态排序常量
+- [k8s_port_audit/report/platform.py](k8s_port_audit/report/platform.py)：Kubernetes 系统组件识别与 `platformRole` 计算
 - [k8s_port_audit/report/exposure_summary.py](k8s_port_audit/report/exposure_summary.py)：页面对象归并、主分类选择、对象分组
 - [k8s_port_audit/report/reporting.py](k8s_port_audit/report/reporting.py)：报告结构装配与 JSON 输出
 - [k8s_port_audit/api/dashboard.py](k8s_port_audit/api/dashboard.py)：HTTP API 与静态页面
@@ -223,6 +277,9 @@ http://127.0.0.1:8080
   - `Service / Pod` 只刷新受影响对象
   - `Node` 变更、手动刷新、周期兜底仍执行完整扫描
 - 页面提供总览和分类标签页，便于按暴露路径查看
+- 页面提供“隐藏 K8s 系统组件”按钮，默认关闭
+  - 默认只隐藏 Kubernetes 自带系统组件
+  - 如果要额外隐藏别的命名空间或组件，通过 `NV_SYSTEM_GROUPS` 显式补充
 - 如在宿主机本地运行源码并需要被动 TCP 证据，可将 `traffic_observation.host_proc_root` 设为 `/proc`
 
 ## 配置项
@@ -243,8 +300,8 @@ http://127.0.0.1:8080
 ### 镜像仓库部署
 
 ```bash
-docker build -t your-registry/k8s-port-audit:0.1.9 .
-docker push your-registry/k8s-port-audit:0.1.9
+docker build -t your-registry/k8s-port-audit:0.2.1 .
+docker push your-registry/k8s-port-audit:0.2.1
 kubectl apply -f manifests/k8s-port-audit.yaml
 ```
 
@@ -266,12 +323,12 @@ Windows PowerShell：
 生成目录：
 
 ```text
-dist/k8s-port-audit-local-0.1.9/
+dist/k8s-port-audit-local-0.2.1/
 ```
 
 目录内容：
 
-- `k8s-port-audit-0.1.9.tar`
+- `k8s-port-audit-0.2.1.tar`
 - `k8s-port-audit-local.yaml`
 - `import-and-apply.sh`
 - `README.md`
@@ -281,8 +338,8 @@ dist/k8s-port-audit-local-0.1.9/
 目标机器执行：
 
 ```bash
-cd k8s-port-audit-local-0.1.9
-sudo ctr -n k8s.io images import ./k8s-port-audit-0.1.9.tar
+cd k8s-port-audit-local-0.2.1
+sudo ctr -n k8s.io images import ./k8s-port-audit-0.2.1.tar
 kubectl apply -f ./k8s-port-audit-local.yaml
 kubectl -n port-audit rollout status deployment/k8s-port-audit --timeout=180s
 ```
@@ -290,7 +347,7 @@ kubectl -n port-audit rollout status deployment/k8s-port-audit --timeout=180s
 或直接运行：
 
 ```bash
-cd k8s-port-audit-local-0.1.9
+cd k8s-port-audit-local-0.2.1
 chmod +x ./import-and-apply.sh
 ./import-and-apply.sh
 ```
@@ -320,7 +377,7 @@ chmod +x ./import-and-apply.sh
 
 ## 维护约定
 
-- 当前保留版本：`0.1.9`
-- [VERSION](VERSION) 固定为 `0.1.9`
-- `dist/` 仅保留 [k8s-port-audit-local-0.1.9](dist/k8s-port-audit-local-0.1.9)
+- 当前保留版本：`0.2.1`
+- [VERSION](VERSION) 固定为 `0.2.1`
+- `dist/` 仅保留 [k8s-port-audit-local-0.2.1](dist/k8s-port-audit-local-0.2.1)
 - 打包脚本生成新 bundle 时自动清理旧版本目录

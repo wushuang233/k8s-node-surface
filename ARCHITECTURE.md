@@ -82,6 +82,10 @@
   - 暴露类型标签
   - 优先级规则
   - 状态排序规则
+- [k8s_port_audit/report/platform.py](k8s_port_audit/report/platform.py)
+  - Kubernetes 系统组件识别
+  - `platformRole` 计算
+  - `NV_SYSTEM_GROUPS` 追加规则解析
 - [k8s_port_audit/report/exposure_summary.py](k8s_port_audit/report/exposure_summary.py)
   - `address:port` 级别对象归并
   - 主分类选择

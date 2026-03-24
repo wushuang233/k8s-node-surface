@@ -242,14 +242,15 @@ label,
   position: static;
   z-index: 3;
   margin-top: 20px;
-  padding: 16px;
+  padding: 14px;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px;
+  align-items: start;
 }
 
 .control-block {
-  padding: 14px;
+  padding: 12px;
 }
 
 .control-block select,
@@ -275,7 +276,7 @@ label,
 .control-block button {
   width: 100%;
   margin-top: 10px;
-  padding: 13px 16px;
+  padding: 11px 14px;
   border: 1px solid rgba(21, 59, 89, 0.28);
   border-radius: 16px;
   background: linear-gradient(135deg, rgba(21, 59, 89, 0.14), rgba(184, 138, 52, 0.24));
@@ -292,15 +293,26 @@ label,
   box-shadow: 0 14px 24px rgba(21, 59, 89, 0.18);
 }
 
+.control-block button.is-active {
+  border-color: rgba(27, 107, 78, 0.38);
+  background: linear-gradient(135deg, rgba(27, 107, 78, 0.16), rgba(184, 138, 52, 0.16));
+  color: var(--ok);
+  box-shadow: 0 12px 22px rgba(27, 107, 78, 0.16);
+}
+
 .control-block button:disabled {
   opacity: 0.78;
   cursor: progress;
 }
 
 .control-note {
-  margin: 10px 0 0;
-  font-size: 0.88rem;
-  line-height: 1.6;
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.action-block {
+  padding-bottom: 10px;
 }
 
 .view-tabs {

@@ -96,8 +96,12 @@ spec:
       serviceAccountName: k8s-port-audit
       containers:
         - name: scanner
-          image: your-registry/k8s-port-audit:0.1.9
+          image: your-registry/k8s-port-audit:0.2.1
           imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -m
+            - k8s_port_audit
           args:
             - --config
             - /app/config/scanner-config.yaml
@@ -106,6 +110,8 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            - name: NV_SYSTEM_GROUPS
+              value: ""
           ports:
             - name: http
               containerPort: 8080

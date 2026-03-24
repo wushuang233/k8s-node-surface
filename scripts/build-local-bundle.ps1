@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Version = (Get-Content (Join-Path $RepoRoot "VERSION") | Select-Object -First 1).Trim()
 $Image = "local/k8s-port-audit:$Version"
+$BaseImage = if ($env:BASE_IMAGE) { $env:BASE_IMAGE } else { "python:3.13-slim" }
 $BundleDir = Join-Path $RepoRoot "dist/k8s-port-audit-local-$Version"
 $TarPath = Join-Path $BundleDir "k8s-port-audit-$Version.tar"
 $ManifestSource = Join-Path $RepoRoot "manifests/k8s-port-audit-local.yaml"
@@ -50,7 +51,7 @@ if (-not $env:KEEP_DOCKER_PROXY) {
 }
 
 if ($env:SKIP_DOCKER_BUILD -ne "1") {
-    docker build -t $Image $RepoRoot
+    docker build --build-arg "BASE_IMAGE=$BaseImage" -t $Image $RepoRoot
     Assert-LastExitCode "docker build"
 } else {
     docker image inspect $Image | Out-Null

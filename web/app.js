@@ -1,10 +1,18 @@
-import { buildExposureState, emptyState, filterState, listTabs, typeFilterOptions } from "./app-data.js";
+import {
+  applyPlatformVisibility,
+  buildExposureState,
+  emptyState,
+  filterState,
+  listTabs,
+  typeFilterOptions,
+} from "./app-data.js";
 import { createRenderer } from "./app-render.js";
 
 const refs = {
   statusFilter: document.querySelector("#status-filter"),
   typeFilter: document.querySelector("#type-filter"),
   searchInput: document.querySelector("#search-input"),
+  platformToggleButton: document.querySelector("#platform-toggle-button"),
   emptyStateTemplate: document.querySelector("#empty-state-template"),
   scanNowButton: document.querySelector("#scan-now-button"),
   scanStateNote: document.querySelector("#scan-state-note"),
@@ -38,6 +46,7 @@ const state = {
   scanRequestInFlight: false,
   tableExpanded: true,
   activeTab: "all",
+  showPlatformComponents: true,
 };
 
 function readFilters() {
@@ -81,17 +90,33 @@ function renderTabs(viewState) {
   });
 }
 
+function renderPlatformToggle() {
+  const hidingEnabled = !state.showPlatformComponents;
+  refs.platformToggleButton.classList.toggle("is-active", hidingEnabled);
+  refs.platformToggleButton.setAttribute("aria-pressed", String(hidingEnabled));
+  refs.platformToggleButton.textContent = hidingEnabled
+    ? "隐藏 K8s 系统组件：开"
+    : "隐藏 K8s 系统组件：关";
+}
+
 function renderPage() {
   if (!state.dashboardPayload) {
     return;
   }
 
-  const filteredState = filterState(state.exposureState, readFilters(), state.activeTab);
+  const baseState = applyPlatformVisibility(state.exposureState, state.showPlatformComponents);
+  const filteredState = filterState(
+    baseState,
+    readFilters(),
+    state.activeTab,
+    { showEmptyNodesOnAll: state.showPlatformComponents }
+  );
   renderer.renderHero(state.dashboardPayload);
   renderer.renderError(state.dashboardPayload);
   renderer.renderScanState(state.dashboardPayload, state.scanRequestInFlight);
-  renderTypeFilter(state.exposureState, state.activeTab);
-  renderTabs(state.exposureState);
+  renderTypeFilter(baseState, state.activeTab);
+  renderTabs(baseState);
+  renderPlatformToggle();
   renderer.renderSummary(filteredState.summary);
   renderer.renderNodes(filteredState.nodeGroups);
   renderer.renderGroups(filteredState.groups);
@@ -156,6 +181,10 @@ function rerender() {
 refs.statusFilter.addEventListener("change", rerender);
 refs.typeFilter.addEventListener("change", rerender);
 refs.searchInput.addEventListener("input", rerender);
+refs.platformToggleButton.addEventListener("click", () => {
+  state.showPlatformComponents = !state.showPlatformComponents;
+  renderPage();
+});
 refs.scanNowButton.addEventListener("click", triggerScan);
 refs.tabButtons.forEach((button) => {
   button.addEventListener("click", () => {
