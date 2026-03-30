@@ -16,13 +16,13 @@
 当前版本：
 
 ```text
-0.2.1
+0.2.2
 ```
 
 默认本地镜像名：
 
 ```text
-local/k8s-port-audit:0.2.1
+local/k8s-port-audit:0.2.2
 ```
 
 ## 1. 仅构建本地镜像
@@ -30,7 +30,7 @@ local/k8s-port-audit:0.2.1
 在项目根目录执行：
 
 ```bash
-docker build -t local/k8s-port-audit:0.2.1 .
+docker build -t local/k8s-port-audit:0.2.2 .
 ```
 
 如果 Docker Hub 网络不稳定，也可以改用镜像源里的 Python 基础镜像：
@@ -38,14 +38,14 @@ docker build -t local/k8s-port-audit:0.2.1 .
 ```bash
 docker build \
   --build-arg BASE_IMAGE=your-mirror.example.com/library/python:3.13-slim \
-  -t local/k8s-port-audit:0.2.1 .
+  -t local/k8s-port-audit:0.2.2 .
 ```
 
 可选校验：
 
 ```bash
-docker image inspect local/k8s-port-audit:0.2.1 >/dev/null
-docker run --rm local/k8s-port-audit:0.2.1 --help
+docker image inspect local/k8s-port-audit:0.2.2 >/dev/null
+docker run --rm local/k8s-port-audit:0.2.2 --help
 ```
 
 ## 2. 只导出镜像 tar
@@ -53,14 +53,14 @@ docker run --rm local/k8s-port-audit:0.2.1 --help
 先完成镜像构建，再执行：
 
 ```bash
-mkdir -p dist/k8s-port-audit-local-0.2.1
-docker save -o dist/k8s-port-audit-local-0.2.1/k8s-port-audit-0.2.1.tar local/k8s-port-audit:0.2.1
+mkdir -p dist/k8s-port-audit-local-0.2.2
+docker save -o dist/k8s-port-audit-local-0.2.2/k8s-port-audit-0.2.2.tar local/k8s-port-audit:0.2.2
 ```
 
 生成结果：
 
 ```text
-dist/k8s-port-audit-local-0.2.1/k8s-port-audit-0.2.1.tar
+dist/k8s-port-audit-local-0.2.2/k8s-port-audit-0.2.2.tar
 ```
 
 ## 3. 生成完整离线 bundle
@@ -102,7 +102,7 @@ $env:BASE_IMAGE="your-mirror.example.com/library/python:3.13-slim"
 生成目录：
 
 ```text
-dist/k8s-port-audit-local-0.2.1/
+dist/k8s-port-audit-local-0.2.2/
 ```
 
 ## 4. 复用本地已有镜像重新打 bundle
@@ -116,7 +116,7 @@ SKIP_DOCKER_BUILD=1 ./scripts/build-local-bundle.sh
 这个模式会直接复用本地已有镜像并重新导出 tar、清单和脚本：
 
 ```text
-local/k8s-port-audit:0.2.1
+local/k8s-port-audit:0.2.2
 ```
 
 注意：
@@ -135,7 +135,7 @@ docker images | grep k8s-port-audit
 检查 tar 是否生成：
 
 ```bash
-ls -lh dist/k8s-port-audit-local-0.2.1/
+ls -lh dist/k8s-port-audit-local-0.2.2/
 ```
 
 校验项目结构：
@@ -152,7 +152,7 @@ ls -lh dist/k8s-port-audit-local-0.2.1/
 
 - Docker daemon 正常
 - `VERSION` 与本地部署清单镜像标签一致
-- 本机已存在 `local/k8s-port-audit:0.2.1`
+- 本机已存在 `local/k8s-port-audit:0.2.2`
 
 只想复用已有镜像时，优先使用：
 

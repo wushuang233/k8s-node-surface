@@ -107,6 +107,7 @@ class ScanCoordinator:
         full_scan: bool = True,
         service_refs: set[tuple[str, str]] | None = None,
         pod_refs: set[tuple[str, str]] | None = None,
+        node_port_refs: set[int] | None = None,
     ) -> None:
         request = ScanRequest(
             source=source,
@@ -114,6 +115,7 @@ class ScanCoordinator:
             full_scan=full_scan,
             service_refs=set(service_refs or ()),
             pod_refs=set(pod_refs or ()),
+            node_port_refs={int(port) for port in (node_port_refs or ()) if int(port) > 0},
         )
 
         with self._lock:
@@ -202,6 +204,7 @@ class ScanCoordinator:
                 "pending_request_full_scan": pending_request.full_scan if pending_request else False,
                 "pending_service_ref_count": len(pending_request.service_refs) if pending_request else 0,
                 "pending_pod_ref_count": len(pending_request.pod_refs) if pending_request else 0,
+                "pending_node_port_ref_count": len(pending_request.node_port_refs) if pending_request else 0,
                 "current_mode": "host_exposure" if self._scan_in_progress else None,
                 "last_completed_mode": "host_exposure" if self._last_scan_completed_at else None,
                 "last_scan_started_at": self._last_scan_started_at,

@@ -58,6 +58,28 @@ def coerce_port_spec(value: Any) -> str:
     raise ValueError(f"无法解析端口配置: {value!r}")
 
 
+def parse_port_window(port_spec: str) -> tuple[int, int]:
+    spec = port_spec.strip()
+    if not spec:
+        raise ValueError("端口范围不能为空")
+
+    if "-" in spec:
+        start_text, end_text = spec.split("-", 1)
+        if not start_text.isdigit() or not end_text.isdigit():
+            raise ValueError(f"端口范围必须是数字，例如 30000-32767: {port_spec}")
+        start_port = int(start_text)
+        end_port = int(end_text)
+    else:
+        if not spec.isdigit():
+            raise ValueError(f"端口范围必须是数字，例如 30000-32767: {port_spec}")
+        start_port = int(spec)
+        end_port = start_port
+
+    if start_port < 1 or end_port > 65535 or start_port > end_port:
+        raise ValueError(f"端口范围无效，合法范围是 1-65535，且 start <= end: {port_spec}")
+    return start_port, end_port
+
+
 def namespace_allowed(namespace: str | None, scanner_config: "ScannerConfig") -> bool:
     if not namespace:
         return True
@@ -91,6 +113,10 @@ class ScannerConfig:
     full_node_tcp_scan: bool = True
     full_node_tcp_port_spec: str = "1-65535"
     full_node_tcp_ports: list[int] = field(default_factory=list, repr=False)
+    service_control_enabled: bool = True
+    service_control_public_service_type: str = "NodePort"
+    service_control_node_port_range_spec: str = "30000-32767"
+    service_control_node_port_range: tuple[int, int] = (30000, 32767)
     traffic_observation_enabled: bool = True
     traffic_observation_host_proc_root: str = "/host-proc"
     web_enabled: bool = True
@@ -104,6 +130,7 @@ class ScannerConfig:
         scope = payload.get("scope", {})
         discovery = payload.get("discovery", {})
         ports = payload.get("ports", {})
+        service_control = payload.get("service_control", {})
         traffic_observation = payload.get("traffic_observation", {})
         report = payload.get("report", {})
         web = payload.get("web", {})
@@ -127,6 +154,16 @@ class ScannerConfig:
             full_node_tcp_port_spec=coerce_port_spec(ports.get("full_node_tcp_ports", "1-65535")),
             full_node_tcp_ports=parse_port_spec(
                 coerce_port_spec(ports.get("full_node_tcp_ports", "1-65535"))
+            ),
+            service_control_enabled=bool(service_control.get("enabled", True)),
+            service_control_public_service_type=str(
+                service_control.get("public_service_type", "NodePort")
+            ),
+            service_control_node_port_range_spec=coerce_port_spec(
+                service_control.get("node_port_range", "30000-32767")
+            ),
+            service_control_node_port_range=parse_port_window(
+                coerce_port_spec(service_control.get("node_port_range", "30000-32767"))
             ),
             traffic_observation_enabled=bool(traffic_observation.get("enabled", True)),
             traffic_observation_host_proc_root=str(
@@ -153,6 +190,14 @@ class ScannerConfig:
             raise ValueError("scan.event_debounce_seconds 不能小于 0")
         if self.full_node_tcp_scan and not self.full_node_tcp_ports:
             raise ValueError("ports.full_node_tcp_ports 不能为空")
+        if self.service_control_public_service_type not in {"NodePort", "LoadBalancer"}:
+            raise ValueError("service_control.public_service_type 仅支持 NodePort 或 LoadBalancer")
+        if (
+            self.service_control_node_port_range[0] < 1
+            or self.service_control_node_port_range[1] > 65535
+            or self.service_control_node_port_range[0] > self.service_control_node_port_range[1]
+        ):
+            raise ValueError("service_control.node_port_range 无效")
         if self.traffic_observation_enabled and not self.traffic_observation_host_proc_root.strip():
             raise ValueError("traffic_observation.host_proc_root 不能为空")
         if not 1 <= self.web_port <= 65535:
@@ -179,6 +224,9 @@ class ScannerConfig:
             "full_node_tcp_scan": self.full_node_tcp_scan,
             "full_node_tcp_port_spec": self.full_node_tcp_port_spec,
             "full_node_tcp_port_count": len(self.full_node_tcp_ports),
+            "service_control_enabled": self.service_control_enabled,
+            "service_control_public_service_type": self.service_control_public_service_type,
+            "service_control_node_port_range": self.service_control_node_port_range_spec,
             "traffic_observation_enabled": self.traffic_observation_enabled,
             "traffic_observation_host_proc_root": self.traffic_observation_host_proc_root,
             "web_enabled": self.web_enabled,

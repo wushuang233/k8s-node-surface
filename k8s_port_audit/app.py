@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from .api.dashboard import start_dashboard_server, stop_dashboard_server
+from .control import ServiceExposureController
 from .domain import ScanRequest
 from .report.reporting import emit_report
 from .runtime.dependencies import ApiException, load_kubernetes_config
@@ -166,7 +167,15 @@ async def run() -> int:
     report_store = ReportStore(scanner_config)
     scan_coordinator = ScanCoordinator(scanner_config)
     scan_coordinator.bind_loop(asyncio.get_running_loop())
-    dashboard_server = start_dashboard_server(scanner_config, report_store, scan_coordinator)
+    service_controller = (
+        ServiceExposureController(scanner_config) if scanner_config.service_control_enabled else None
+    )
+    dashboard_server = start_dashboard_server(
+        scanner_config,
+        report_store,
+        scan_coordinator,
+        service_controller=service_controller,
+    )
     event_watcher = KubernetesEventWatcher(scanner_config, scan_coordinator)
     event_watcher.start()
 

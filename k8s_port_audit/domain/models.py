@@ -11,6 +11,7 @@ class ScanRequest:
     full_scan: bool = True
     service_refs: set[tuple[str, str]] = field(default_factory=set)
     pod_refs: set[tuple[str, str]] = field(default_factory=set)
+    node_port_refs: set[int] = field(default_factory=set)
 
     def merged_with(self, other: "ScanRequest") -> "ScanRequest":
         return ScanRequest(
@@ -19,6 +20,7 @@ class ScanRequest:
             full_scan=self.full_scan or other.full_scan,
             service_refs=set(self.service_refs) | set(other.service_refs),
             pod_refs=set(self.pod_refs) | set(other.pod_refs),
+            node_port_refs=set(self.node_port_refs) | set(other.node_port_refs),
         )
 
 
@@ -48,6 +50,7 @@ class TargetSource(TypedDict, total=False):
     namespace: str
     name: str
     service_name: str
+    actual_service_name: str
     service_type: str
     node_name: str
     container: str

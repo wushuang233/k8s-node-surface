@@ -8,7 +8,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from ..control import ServiceExposureController
+from ..control.service_controls import ServiceControlError
 from ..report import utc_now
+from ..runtime.dependencies import ApiException
 from ..runtime.state import ReportStore, ScanCoordinator
 from ..settings.config import ScannerConfig
 
@@ -25,16 +28,40 @@ class DashboardHTTPServer(ThreadingHTTPServer):
         report_store: ReportStore,
         scanner_config: ScannerConfig,
         scan_coordinator: ScanCoordinator,
+        service_controller: ServiceExposureController | None,
     ) -> None:
         super().__init__(server_address, DashboardRequestHandler)
         self.report_store = report_store
         self.scanner_config = scanner_config
         self.scan_coordinator = scan_coordinator
+        self.service_controller = service_controller
         self.assets_dir = WEB_DIR
 
     def dashboard_snapshot(self) -> dict[str, Any]:
         payload = self.report_store.snapshot()
         payload["scan_state"] = self.scan_coordinator.snapshot()
+        if self.service_controller is not None and self.scanner_config.service_control_enabled:
+            try:
+                payload["service_controls"] = self.service_controller.list_controls()
+            except Exception as exc:
+                payload["service_controls"] = {
+                    "enabled": True,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "items": [],
+                    "service_count": 0,
+                    "open_port_count": 0,
+                    "public_service_type": self.scanner_config.service_control_public_service_type,
+                    "node_port_range": self.scanner_config.service_control_node_port_range_spec,
+                }
+        else:
+            payload["service_controls"] = {
+                "enabled": False,
+                "items": [],
+                "service_count": 0,
+                "open_port_count": 0,
+                "public_service_type": self.scanner_config.service_control_public_service_type,
+                "node_port_range": self.scanner_config.service_control_node_port_range_spec,
+            }
         return payload
 
 
@@ -72,8 +99,66 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self.server.scan_coordinator.request_scan("manual", reason="用户手动刷新")
             self.serve_json(self.server.dashboard_snapshot(), status_code=202)
             return
+        if path == "/api/service-controls/toggle":
+            self.handle_service_control_toggle()
+            return
 
         self.send_error(404, "Not Found")
+
+    def handle_service_control_toggle(self) -> None:
+        if self.server.service_controller is None or not self.server.scanner_config.service_control_enabled:
+            self.serve_json(
+                {"error": "当前未启用业务 Service 对外治理功能"},
+                status_code=404,
+            )
+            return
+
+        try:
+            payload = self.read_json_body()
+            namespace = str(payload.get("namespace", "")).strip()
+            service_name = str(payload.get("service_name", "")).strip()
+            port_key = str(payload.get("port_key", "")).strip()
+            public_port = payload.get("public_port")
+            expose = self.read_bool(payload.get("expose"))
+            if not namespace or not service_name or not port_key:
+                raise ValueError("namespace、service_name、port_key 不能为空")
+
+            action = self.server.service_controller.set_port_exposure(
+                namespace=namespace,
+                service_name=service_name,
+                port_key=port_key,
+                expose=expose,
+                public_port=public_port,
+            )
+        except json.JSONDecodeError:
+            self.serve_json({"error": "请求体不是合法 JSON"}, status_code=400)
+            return
+        except ValueError as exc:
+            self.serve_json({"error": str(exc)}, status_code=400)
+            return
+        except ServiceControlError as exc:
+            self.serve_json({"error": str(exc)}, status_code=409)
+            return
+        except ApiException as exc:
+            self.serve_json(
+                {"error": f"Kubernetes API 错误: status={getattr(exc, 'status', 'unknown')} detail={exc}"},
+                status_code=502,
+            )
+            return
+
+        self.server.scan_coordinator.request_scan(
+            "service_control",
+            reason=f"业务 Service 端口{'打开' if expose else '关闭'}",
+            full_scan=False,
+            service_refs={
+                (namespace, service_name),
+                (namespace, action["managed_service_name"]),
+            },
+            node_port_refs=set(action.get("affected_node_ports") or []),
+        )
+        response = self.server.dashboard_snapshot()
+        response["service_control_action"] = action
+        self.serve_json(response, status_code=200)
 
     def serve_static(self, file_name: str) -> None:
         assets_dir = self.server.assets_dir.resolve()
@@ -109,6 +194,26 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def read_json_body(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        raw = self.rfile.read(length) if length > 0 else b"{}"
+        payload = json.loads(raw.decode("utf-8") or "{}")
+        if not isinstance(payload, dict):
+            raise ValueError("请求体必须是 JSON 对象")
+        return payload
+
+    @staticmethod
+    def read_bool(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1", "yes", "on"}:
+                return True
+            if normalized in {"false", "0", "no", "off"}:
+                return False
+        raise ValueError("expose 必须是布尔值")
+
     def log_message(self, format: str, *args: Any) -> None:
         return
 
@@ -117,6 +222,7 @@ def start_dashboard_server(
     scanner_config: ScannerConfig,
     report_store: ReportStore,
     scan_coordinator: ScanCoordinator,
+    service_controller: ServiceExposureController | None = None,
 ) -> DashboardHTTPServer | None:
     if not scanner_config.web_enabled:
         return None
@@ -130,6 +236,7 @@ def start_dashboard_server(
         report_store,
         scanner_config,
         scan_coordinator,
+        service_controller,
     )
     thread = threading.Thread(
         target=server.serve_forever,

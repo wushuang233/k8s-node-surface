@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..control.service_controls import (
+    MANAGED_LABEL,
+    OWNER_NAMESPACE_ANNOTATION,
+    OWNER_SERVICE_ANNOTATION,
+)
 from ..domain import DiscoverySnapshot, NodeCandidate, ProbeTarget
 from ..settings.config import ScannerConfig, namespace_allowed
 from .traffic import is_unspecified_address
@@ -120,6 +125,19 @@ class HostExposureDiscovery:
             "unique_targets": 0,
         }
 
+    @staticmethod
+    def service_source_name(service: Any) -> str:
+        metadata = getattr(service, "metadata", None)
+        labels = dict(getattr(metadata, "labels", None) or {})
+        annotations = dict(getattr(metadata, "annotations", None) or {})
+        if labels.get(MANAGED_LABEL) != "true":
+            return getattr(metadata, "name", None) or "-"
+        owner_namespace = annotations.get(OWNER_NAMESPACE_ANNOTATION)
+        owner_service = annotations.get(OWNER_SERVICE_ANNOTATION)
+        if owner_namespace and owner_service and owner_namespace == getattr(metadata, "namespace", None):
+            return owner_service
+        return getattr(metadata, "name", None) or "-"
+
     def collect_service_targets(
         self,
         target_map: dict[tuple[str, int], ProbeTarget],
@@ -145,6 +163,7 @@ class HostExposureDiscovery:
             service_spec = service.spec
             service_status = getattr(service, "status", None)
             service_type = service_spec.type or "ClusterIP"
+            source_name = self.service_source_name(service)
 
             for port_def in service_spec.ports or []:
                 protocol = (port_def.protocol or "TCP").upper()
@@ -155,7 +174,9 @@ class HostExposureDiscovery:
                 source_common = {
                     "kind": "service",
                     "namespace": namespace,
-                    "name": service.metadata.name,
+                    "name": source_name,
+                    "service_name": source_name,
+                    "actual_service_name": service.metadata.name,
                     "service_type": service_type,
                     "labels": dict(getattr(service.metadata, "labels", None) or {}),
                     "port_name": port_def.name,
@@ -203,6 +224,34 @@ class HostExposureDiscovery:
                             },
                         )
                         inventory["service_node_port_targets"] += 1
+
+    def collect_partial_node_port_targets(
+        self,
+        target_map: dict[tuple[str, int], ProbeTarget],
+        inventory: dict[str, int],
+        node_addresses: list[dict[str, str]],
+        node_port_refs: set[int] | None = None,
+    ) -> None:
+        if not node_port_refs:
+            return
+
+        # 业务 Service 端口治理只需要补扫受影响的 NodePort。
+        # 这里不做整轮 1-65535，只对“变更前/变更后”涉及到的节点端口做定点刷新。
+        for node in node_addresses:
+            for port in sorted(node_port_refs):
+                self.add_target(
+                    target_map,
+                    node["address"],
+                    int(port),
+                    {
+                        "kind": "node",
+                        "namespace": "-",
+                        "name": node["name"],
+                        "node_name": node["name"],
+                        "address_type": node.get("address_type"),
+                        "reason": "node_full_scan",
+                    },
+                )
 
     def collect_pod_targets(
         self,
@@ -299,6 +348,7 @@ class HostExposureDiscovery:
         self,
         service_refs: set[tuple[str, str]] | None = None,
         pod_refs: set[tuple[str, str]] | None = None,
+        node_port_refs: set[int] | None = None,
     ) -> DiscoverySnapshot:
         inventory = self.build_inventory_template()
         target_map: dict[tuple[str, int], ProbeTarget] = {}
@@ -308,6 +358,12 @@ class HostExposureDiscovery:
         node_addresses_by_name = self.index_node_addresses(node_addresses)
 
         self.collect_service_targets(target_map, inventory, node_addresses, service_refs=service_refs)
+        self.collect_partial_node_port_targets(
+            target_map,
+            inventory,
+            node_addresses,
+            node_port_refs=node_port_refs,
+        )
         self.collect_pod_targets(
             target_map,
             inventory,

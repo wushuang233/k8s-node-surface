@@ -6,6 +6,24 @@
 离线部署步骤见 [README-DEPLOY.md](README-DEPLOY.md)。
 代码结构与运行流程见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
+当前版本：`0.2.2`
+
+## 0.2.2 新增内容
+
+增加了“业务 Service 对外治理”：
+
+- 按端口治理业务 `Service` 的对外暴露
+- 支持为单个端口单独打开、关闭
+- 支持自定义外部端口
+- 对已有业务 `NodePort / LoadBalancer Service`，会先接管成内部 `Service + 受控公开 Service`
+- 页面里的治理面板可以直接操作
+
+第一步的范围先收在这里：
+
+- 只处理 `TCP`
+- 只接管全 `TCP` 的业务 `ClusterIP / NodePort / LoadBalancer Service`
+- 默认公开类型仍由配置决定：`NodePort` 或 `LoadBalancer`
+
 ## 范围
 
 纳入结果：
@@ -125,6 +143,50 @@ security-platform=security-system/*,mesh=mesh-system/*,kube-system
 - [k8s_port_audit/report/exposure_summary.py](k8s_port_audit/report/exposure_summary.py)
 - [k8s_port_audit/report/reporting.py](k8s_port_audit/report/reporting.py)
 
+### 2.2 业务 Service 对外治理
+
+这部分是 `0.2.2` 新增的控制能力。
+
+处理方式：
+
+1. 从所有 `Service` 里筛出可治理的业务 Service
+2. 要求对象满足：
+   - 在当前扫描范围内
+   - 不属于工具自身
+   - 不属于 K8s 系统组件
+   - 有 `selector`
+   - 只包含 `TCP` 端口
+   - 类型是 `ClusterIP / NodePort / LoadBalancer`
+3. 原始业务 `Service` 保持或收回为 `ClusterIP`
+4. 需要对外的端口放到受控公开 `Service` 里
+5. 已有 `NodePort / LoadBalancer Service` 第一次细粒度治理时，会先被接管成“内部 Service + 受控公开 Service”
+
+边界：
+
+- 只治理 `TCP`
+- 只支持带 `selector` 的 `Service`
+- `NodePort` 自定义端口要落在配置范围内
+- `LoadBalancer` 自定义端口要在 `1-65535` 内
+
+默认公开类型由配置决定：
+
+```yaml
+service_control:
+  enabled: true
+  public_service_type: NodePort
+  node_port_range: 30000-32767
+```
+
+当前只支持：
+
+- `NodePort`
+- `LoadBalancer`
+
+核心文件：
+
+- [k8s_port_audit/control/service_controls.py](k8s_port_audit/control/service_controls.py)
+- [k8s_port_audit/api/dashboard.py](k8s_port_audit/api/dashboard.py)
+
 ### 3. 被动 TCP 证据
 
 如已挂载宿主机 `/proc`，则补充解析：
@@ -178,6 +240,9 @@ security-platform=security-system/*,mesh=mesh-system/*,kube-system
 │   ├── api/
 │   │   ├── __init__.py
 │   │   └── dashboard.py
+│   ├── control/
+│   │   ├── __init__.py
+│   │   └── service_controls.py
 │   ├── domain/
 │   │   ├── __init__.py
 │   │   └── models.py
@@ -217,7 +282,7 @@ security-platform=security-system/*,mesh=mesh-system/*,kube-system
 │   ├── render-fragments.js
 │   └── styles.css
 └── dist/
-    └── k8s-port-audit-local-0.2.1/
+    └── k8s-port-audit-local-0.2.2/
 ```
 
 ## 模块说明
@@ -228,6 +293,7 @@ security-platform=security-system/*,mesh=mesh-system/*,kube-system
 - [k8s_port_audit/runtime/state.py](k8s_port_audit/runtime/state.py)：报告缓存与手动刷新协调
 - [k8s_port_audit/runtime/watcher.py](k8s_port_audit/runtime/watcher.py)：Kubernetes 事件监听与自动刷新触发
 - [k8s_port_audit/domain/models.py](k8s_port_audit/domain/models.py)：共享数据模型
+- [k8s_port_audit/control/service_controls.py](k8s_port_audit/control/service_controls.py)：业务 Service 对外治理控制
 - [k8s_port_audit/scan/discovery.py](k8s_port_audit/scan/discovery.py)：宿主机暴露路径发现
 - [k8s_port_audit/scan/scanner.py](k8s_port_audit/scan/scanner.py)：单轮扫描编排
 - [k8s_port_audit/scan/probe.py](k8s_port_audit/scan/probe.py)：异步 TCP 探测与状态分类
@@ -237,6 +303,7 @@ security-platform=security-system/*,mesh=mesh-system/*,kube-system
 - [k8s_port_audit/report/exposure_summary.py](k8s_port_audit/report/exposure_summary.py)：页面对象归并、主分类选择、对象分组
 - [k8s_port_audit/report/reporting.py](k8s_port_audit/report/reporting.py)：报告结构装配与 JSON 输出
 - [k8s_port_audit/api/dashboard.py](k8s_port_audit/api/dashboard.py)：HTTP API 与静态页面
+- [web/index.html](web/index.html)：业务 Service 对外治理面板与宿主机暴露面板
 - [web/app.js](web/app.js)：前端状态管理、标签页切换与轮询
 - [web/app-data.js](web/app-data.js)：前端数据归一化与分组
 - [web/app-render.js](web/app-render.js)：页面渲染
@@ -292,6 +359,7 @@ http://127.0.0.1:8080
 - `scope`：命名空间白名单与黑名单
 - `discovery`：是否启用各类宿主机暴露路径发现
 - `ports.full_node_tcp_ports`：节点地址探测端口范围
+- `service_control`：业务 `Service` 的对外治理方式
 - `traffic_observation`：宿主机 `/proc` TCP 证据开关与路径
 - `web`：监听地址、端口、前端轮询周期
 
@@ -300,8 +368,8 @@ http://127.0.0.1:8080
 ### 镜像仓库部署
 
 ```bash
-docker build -t your-registry/k8s-port-audit:0.2.1 .
-docker push your-registry/k8s-port-audit:0.2.1
+docker build -t your-registry/k8s-port-audit:0.2.2 .
+docker push your-registry/k8s-port-audit:0.2.2
 kubectl apply -f manifests/k8s-port-audit.yaml
 ```
 
@@ -323,12 +391,12 @@ Windows PowerShell：
 生成目录：
 
 ```text
-dist/k8s-port-audit-local-0.2.1/
+dist/k8s-port-audit-local-0.2.2/
 ```
 
 目录内容：
 
-- `k8s-port-audit-0.2.1.tar`
+- `k8s-port-audit-0.2.2.tar`
 - `k8s-port-audit-local.yaml`
 - `import-and-apply.sh`
 - `README.md`
@@ -338,8 +406,8 @@ dist/k8s-port-audit-local-0.2.1/
 目标机器执行：
 
 ```bash
-cd k8s-port-audit-local-0.2.1
-sudo ctr -n k8s.io images import ./k8s-port-audit-0.2.1.tar
+cd k8s-port-audit-local-0.2.2
+sudo ctr -n k8s.io images import ./k8s-port-audit-0.2.2.tar
 kubectl apply -f ./k8s-port-audit-local.yaml
 kubectl -n port-audit rollout status deployment/k8s-port-audit --timeout=180s
 ```
@@ -347,7 +415,7 @@ kubectl -n port-audit rollout status deployment/k8s-port-audit --timeout=180s
 或直接运行：
 
 ```bash
-cd k8s-port-audit-local-0.2.1
+cd k8s-port-audit-local-0.2.2
 chmod +x ./import-and-apply.sh
 ./import-and-apply.sh
 ```
@@ -359,6 +427,7 @@ chmod +x ./import-and-apply.sh
 - 读取 `pods`
 - 读取 `services`
 - 读取 `nodes`
+- 创建、更新、删除受控公开 `services`
 - 通过 `MY_NODE_NAME` 获取运行节点名称
 - 只读挂载宿主机 `/proc` 到 `/host-proc`
 
@@ -377,7 +446,7 @@ chmod +x ./import-and-apply.sh
 
 ## 维护约定
 
-- 当前保留版本：`0.2.1`
-- [VERSION](VERSION) 固定为 `0.2.1`
-- `dist/` 仅保留 [k8s-port-audit-local-0.2.1](dist/k8s-port-audit-local-0.2.1)
+- 当前保留版本：`0.2.2`
+- [VERSION](VERSION) 固定为 `0.2.2`
+- `dist/` 仅保留 [k8s-port-audit-local-0.2.2](dist/k8s-port-audit-local-0.2.2)
 - 打包脚本生成新 bundle 时自动清理旧版本目录

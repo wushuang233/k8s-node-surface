@@ -22,6 +22,11 @@ discovery:
 ports:
   full_node_tcp_ports: 1-65535
 
+service_control:
+  enabled: true
+  public_service_type: NodePort
+  node_port_range: 30000-32767
+
 report:
   pretty_json: true
 

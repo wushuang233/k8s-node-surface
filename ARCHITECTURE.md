@@ -1,6 +1,6 @@
 # 架构说明
 
-保留版本：`0.1.9`
+保留版本：`0.2.2`
 
 本文件只说明代码分层和运行流程。部署命令见 [README-DEPLOY.md](README-DEPLOY.md)。
 
@@ -29,6 +29,7 @@
    - `Service / Pod` 事件默认走局部刷新
    - `Node` 事件、手动刷新、周期兜底走完整扫描
 8. 更新内存报告并通过 HTTP API 提供给前端
+9. 接收业务 Service 端口治理请求，维护“内部 Service + 受控公开 Service”
 
 ## 分层结构
 
@@ -76,6 +77,16 @@
 - [k8s_port_audit/scan/scanner.py](k8s_port_audit/scan/scanner.py)
   - 编排单轮扫描
 
+### 对外治理层
+
+- [k8s_port_audit/control/service_controls.py](k8s_port_audit/control/service_controls.py)
+  - 识别可治理的业务 `ClusterIP / NodePort / LoadBalancer Service`
+  - 原始业务 `Service` 保持或收回为 `ClusterIP`
+  - 需要对外的端口放到受控公开 `Service`
+  - 对已有 `NodePort / LoadBalancer` 做首次细粒度治理时，先接管再细分端口
+  - 支持为单个端口指定外部端口
+  - 当前只支持 `NodePort` 和 `LoadBalancer`
+
 ### 汇总与状态层
 
 - [k8s_port_audit/report/exposure.py](k8s_port_audit/report/exposure.py)
@@ -106,6 +117,7 @@
 - [k8s_port_audit/api/dashboard.py](k8s_port_audit/api/dashboard.py)
   - `/api/dashboard`
   - `/api/scan`
+  - `/api/service-controls/toggle`
   - `/healthz`
   - 静态资源分发
 - [web/app.js](web/app.js)
@@ -180,7 +192,7 @@
 - `manifests/`
 - `scripts/`
 - `web/`
-- `dist/k8s-port-audit-local-0.1.9/`
+- `dist/k8s-port-audit-local-0.2.2/`
 
 当前约定：
 

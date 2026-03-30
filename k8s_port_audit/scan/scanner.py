@@ -142,6 +142,7 @@ class HostExposureScanner:
             "request_reason": scan_request.reason,
             "partial_service_ref_count": len(scan_request.service_refs),
             "partial_pod_ref_count": len(scan_request.pod_refs),
+            "partial_node_port_ref_count": len(scan_request.node_port_refs),
             "full_node_tcp_scan": self.scanner_config.full_node_tcp_scan,
             "full_node_tcp_port_spec": self.scanner_config.full_node_tcp_port_spec,
             "full_node_tcp_port_count": len(self.scanner_config.full_node_tcp_ports),
@@ -154,8 +155,18 @@ class HostExposureScanner:
     def source_matches_request(source: dict[str, Any], scan_request: ScanRequest) -> bool:
         namespace = source.get("namespace")
         name = source.get("name")
-        if source.get("kind") == "service" and (namespace, name) in scan_request.service_refs:
-            return True
+        if source.get("kind") == "service":
+            service_names = {
+                value
+                for value in (
+                    name,
+                    source.get("service_name"),
+                    source.get("actual_service_name"),
+                )
+                if value
+            }
+            if any((namespace, service_name) in scan_request.service_refs for service_name in service_names):
+                return True
         if source.get("kind") == "pod" and (namespace, name) in scan_request.pod_refs:
             return True
         return False
@@ -164,14 +175,20 @@ class HostExposureScanner:
         self,
         previous_results: list[dict[str, Any]],
         scan_request: ScanRequest,
+        refreshed_node_targets: set[tuple[str, int]] | None = None,
     ) -> list[dict[str, Any]]:
         retained_results: list[dict[str, Any]] = []
+        refreshed_node_targets = refreshed_node_targets or set()
 
         for result in previous_results:
+            result_key = (result["address"], result["port"])
             remaining_sources = [
                 copy.deepcopy(source)
                 for source in result.get("sources", [])
                 if not self.source_matches_request(source, scan_request)
+                and not (
+                    result_key in refreshed_node_targets and source.get("reason") == "node_full_scan"
+                )
             ]
             if not remaining_sources:
                 continue
@@ -199,7 +216,16 @@ class HostExposureScanner:
         partial_results: list[dict[str, Any]],
         scan_request: ScanRequest,
     ) -> list[dict[str, Any]]:
-        retained_results = self.strip_request_sources(previous_results, scan_request)
+        refreshed_node_targets = {
+            (result["address"], result["port"])
+            for result in partial_results
+            if any(source.get("reason") == "node_full_scan" for source in result.get("sources", []))
+        }
+        retained_results = self.strip_request_sources(
+            previous_results,
+            scan_request,
+            refreshed_node_targets=refreshed_node_targets,
+        )
         retained_status_by_target = {
             (result["address"], result["port"]): result.get("status")
             for result in retained_results
@@ -209,10 +235,23 @@ class HostExposureScanner:
         for result in partial_results:
             target_key = (result["address"], result["port"])
             retained_status = retained_status_by_target.get(target_key)
+            node_only_refresh = (
+                target_key in refreshed_node_targets
+                and all(source.get("reason") == "node_full_scan" for source in result.get("sources", []))
+            )
+
+            # 业务治理导致的 NodePort 收回后，定点补扫会返回 closed/timeout。
+            # 这类结果只用于把旧的 open 记录清掉，不应该继续占据面板里的“记录数”。
+            if node_only_refresh and result.get("status") != "open":
+                continue
 
             # 事件局部刷新只负责更新相关对象的归因路径；如果同一地址端口仍被别的路径探测为 open，
             # 不再把本次 closed/timeout 结果重新挂回去，避免页面上出现“节点仍开放，但对象归因还停留在旧路径”。
-            if retained_status == "open" and result.get("status") != "open":
+            if (
+                target_key not in refreshed_node_targets
+                and retained_status == "open"
+                and result.get("status") != "open"
+            ):
                 continue
 
             normalized_partial_results.append(result)
@@ -299,6 +338,7 @@ class HostExposureScanner:
         discovery_snapshot = self.discovery.discover(
             service_refs=scan_request.service_refs,
             pod_refs=scan_request.pod_refs,
+            node_port_refs=scan_request.node_port_refs,
         )
         partial_results = await self.collect_targeted_results(discovery_snapshot)
         previous_results = copy.deepcopy(previous_report.get("results") or [])

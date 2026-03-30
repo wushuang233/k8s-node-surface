@@ -5,7 +5,7 @@
 ## 1. 进入 bundle 目录
 
 ```bash
-cd k8s-port-audit-local-0.2.1
+cd k8s-port-audit-local-0.2.2
 ```
 
 ## 2. 导入镜像
@@ -13,13 +13,13 @@ cd k8s-port-audit-local-0.2.1
 普通 Kubernetes：
 
 ```bash
-sudo ctr -n k8s.io images import ./k8s-port-audit-0.2.1.tar
+sudo ctr -n k8s.io images import ./k8s-port-audit-0.2.2.tar
 ```
 
 `k3s`：
 
 ```bash
-sudo k3s ctr -n k8s.io images import ./k8s-port-audit-0.2.1.tar
+sudo k3s ctr -n k8s.io images import ./k8s-port-audit-0.2.2.tar
 ```
 
 ## 3. 应用清单
@@ -89,15 +89,15 @@ Scheduled ... to tdx-worker1
 ErrImageNeverPull
 ```
 
-说明 `tdx-worker1` 节点未导入 `local/k8s-port-audit:0.2.1`。
+说明 `tdx-worker1` 节点未导入 `local/k8s-port-audit:0.2.2`。
 
 建议做法：对每个可调度节点导入同一个 tar。
 
 ## 一次执行完
 
 ```bash
-cd k8s-port-audit-local-0.2.1
-sudo ctr -n k8s.io images import ./k8s-port-audit-0.2.1.tar
+cd k8s-port-audit-local-0.2.2
+sudo ctr -n k8s.io images import ./k8s-port-audit-0.2.2.tar
 kubectl apply -f ./k8s-port-audit-local.yaml
 kubectl -n port-audit rollout status deployment/k8s-port-audit --timeout=180s
 kubectl get pods -n port-audit -o wide

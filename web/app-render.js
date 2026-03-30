@@ -1,5 +1,10 @@
 import { formatScanMode, formatTime } from "./app-data.js";
-import { renderGroupCard, renderNodeCard, renderTableRow } from "./render-fragments.js";
+import {
+  renderGroupCard,
+  renderNodeCard,
+  renderServiceControlNamespaceGroup,
+  renderTableRow,
+} from "./render-fragments.js";
 
 export function createRenderer(refs) {
   function cloneEmptyState() {
@@ -81,20 +86,89 @@ export function createRenderer(refs) {
       notes.push("流量不可用");
     }
 
-    refs.scanStateNote.textContent = notes.join(" · ") || "等待状态更新";
-
-    if (scanRequestInFlight) {
-      refs.scanNowButton.textContent = "提交中";
-    } else if (scanState.scan_in_progress) {
-      refs.scanNowButton.textContent = "扫描中";
-    } else if (scanState.pending_scan && scanState.pending_request_source === "manual") {
-      refs.scanNowButton.textContent = "手动刷新已排队";
-    } else if (scanState.pending_scan) {
-      refs.scanNowButton.textContent = "等待自动刷新";
-    } else {
-      refs.scanNowButton.textContent = "立即刷新";
+    const noteText = notes.join(" · ") || "等待状态更新";
+    refs.scanStateNote.textContent = noteText;
+    if (refs.serviceControlScanNote) {
+      refs.serviceControlScanNote.textContent = noteText;
     }
-    refs.scanNowButton.disabled = scanRequestInFlight;
+
+    const buttonLabel = scanRequestInFlight
+      ? "提交中"
+      : scanState.scan_in_progress
+        ? "扫描中"
+        : scanState.pending_scan && scanState.pending_request_source === "manual"
+          ? "手动刷新已排队"
+          : scanState.pending_scan
+            ? "等待自动刷新"
+            : "立即刷新";
+
+    refs.scanNowButton.textContent = buttonLabel;
+    if (refs.serviceControlRefreshButton) {
+      refs.serviceControlRefreshButton.textContent = buttonLabel;
+    }
+    if (scanRequestInFlight) {
+      refs.scanNowButton.disabled = true;
+      if (refs.serviceControlRefreshButton) {
+        refs.serviceControlRefreshButton.disabled = true;
+      }
+    } else {
+      refs.scanNowButton.disabled = false;
+      if (refs.serviceControlRefreshButton) {
+        refs.serviceControlRefreshButton.disabled = false;
+      }
+    }
+  }
+
+  function renderServiceControls(serviceControls, options = {}) {
+    const controlState = serviceControls || {};
+    const items = controlState.items || [];
+    const query = (options.query || "").trim().toLowerCase();
+    const filteredItems = query
+      ? items.filter((item) =>
+          [item.namespace, item.service_name, ...(item.ports || []).map((port) => `${port.service_port} ${port.port_name}`)]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase()
+            .includes(query)
+        )
+      : items;
+    const filteredOpenPortCount = filteredItems.reduce(
+      (count, item) => count + Number(item.open_port_count || 0),
+      0
+    );
+
+    refs.serviceControlList.innerHTML = "";
+    const groupedItems = groupServiceControls(filteredItems);
+    refs.serviceControlCountNote.textContent = `命名空间 ${groupedItems.length} 个 · 服务 ${filteredItems.length} 个 · 已开放 ${filteredOpenPortCount} 个端口`;
+
+    if (!controlState.enabled) {
+      const emptyState = cloneEmptyState();
+      emptyState.querySelector("h3").textContent = "功能未启用";
+      emptyState.querySelector("p").textContent = "当前配置没有启用业务 Service 对外治理。";
+      refs.serviceControlList.appendChild(emptyState);
+      return;
+    }
+
+    if (controlState.error) {
+      const emptyState = cloneEmptyState();
+      emptyState.querySelector("h3").textContent = "读取失败";
+      emptyState.querySelector("p").textContent = controlState.error;
+      refs.serviceControlList.appendChild(emptyState);
+      return;
+    }
+
+    if (!filteredItems.length) {
+      refs.serviceControlList.appendChild(cloneEmptyState());
+      return;
+    }
+
+    groupedItems.forEach((group) => {
+      const section = document.createElement("section");
+      section.innerHTML = renderServiceControlNamespaceGroup(group, {
+        activeActionKey: options.activeActionKey || "",
+      });
+      refs.serviceControlList.appendChild(section.firstElementChild);
+    });
   }
 
   function renderNodes(nodeGroups) {
@@ -166,8 +240,39 @@ export function createRenderer(refs) {
     renderError,
     showPageError,
     renderScanState,
+    renderServiceControls,
     renderNodes,
     renderGroups,
     renderTable,
   };
+}
+
+function groupServiceControls(items) {
+  const collator = new Intl.Collator("zh-CN");
+  const groups = new Map();
+
+  items
+    .slice()
+    .sort(
+      (left, right) =>
+        collator.compare(left.namespace, right.namespace) ||
+        collator.compare(left.service_name, right.service_name)
+    )
+    .forEach((item) => {
+      const groupKey = item.namespace || "-";
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, {
+          namespace: groupKey,
+          services: [],
+          openPortCount: 0,
+          portCount: 0,
+        });
+      }
+      const group = groups.get(groupKey);
+      group.services.push(item);
+      group.openPortCount += Number(item.open_port_count || 0);
+      group.portCount += Number((item.ports || []).length);
+    });
+
+  return [...groups.values()];
 }

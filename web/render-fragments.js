@@ -70,6 +70,141 @@ function renderAddressGroup(addressGroup) {
   `;
 }
 
+function renderPortPublicMeta(portItem, publicServiceType) {
+  if (!portItem.public) {
+    return "未公开";
+  }
+  if (publicServiceType === "NodePort" && portItem.node_port) {
+    return `NodePort ${portItem.node_port}`;
+  }
+  if (publicServiceType === "LoadBalancer" && portItem.public_port) {
+    return `LoadBalancer ${portItem.public_port}`;
+  }
+  return publicServiceType;
+}
+
+function renderServiceControlPortRows(item, options = {}) {
+  const { activeActionKey = "" } = options;
+  const publicPortLabel = item.public_service_type === "NodePort" ? "NodePort" : "外部端口";
+  const [nodePortMin, nodePortMax] = String(item.node_port_range || "30000-32767").split("-", 2);
+  const publicPortHint =
+    item.public_service_type === "NodePort"
+      ? "自动分配或手动指定"
+      : "留空沿用内部端口";
+
+  return (item.ports || []).map((portItem) => {
+    const openActionKey = `${item.namespace}/${item.service_name}/${portItem.key}/open`;
+    const closeActionKey = `${item.namespace}/${item.service_name}/${portItem.key}/close`;
+    const busy = activeActionKey === openActionKey || activeActionKey === closeActionKey;
+    const inputValue =
+      portItem.effective_public_port != null ? `value="${escapeHtml(portItem.effective_public_port)}"` : "";
+    const actionLabel = portItem.public ? "更新" : "打开";
+    const currentMeta = renderPortPublicMeta(portItem, item.public_service_type);
+    const secondaryMeta = [
+      portItem.port_name || "",
+      portItem.target_port ? `target ${portItem.target_port}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    return `
+      <tr class="service-control-row">
+        <td class="service-control-service-cell">
+          <div class="cell-primary">${escapeHtml(item.service_name)}</div>
+          <div class="cell-secondary">${escapeHtml(item.service_type || "ClusterIP")}</div>
+        </td>
+        <td class="service-control-port-cell">
+          <div class="cell-primary item-target">${escapeHtml(portItem.service_port)}/${escapeHtml(portItem.protocol)}</div>
+          <div class="cell-secondary">${escapeHtml(secondaryMeta || "未命名端口")}</div>
+        </td>
+        <td class="service-control-current-cell">
+          <span class="badge ${portItem.public ? "badge-primary" : "badge-muted"}">${escapeHtml(currentMeta)}</span>
+        </td>
+        <td class="service-control-input-cell">
+          <label class="service-port-input-wrap">
+            <span class="sr-only">${escapeHtml(publicPortLabel)}</span>
+            <input
+              class="service-port-input"
+              type="number"
+              min="${escapeHtml(item.public_service_type === "NodePort" ? nodePortMin || "1" : "1")}"
+              max="${escapeHtml(item.public_service_type === "NodePort" ? nodePortMax || "65535" : "65535")}"
+              placeholder="${escapeHtml(publicPortHint)}"
+              data-role="public-port-input"
+              aria-label="${escapeHtml(publicPortLabel)}"
+              ${inputValue}
+              ${busy ? "disabled" : ""}
+            />
+          </label>
+        </td>
+        <td class="service-control-action-cell">
+          <div class="service-control-action-group">
+            <button
+              type="button"
+              class="service-port-action"
+              data-action="toggle-service-port"
+              data-namespace="${escapeHtml(item.namespace)}"
+              data-service="${escapeHtml(item.service_name)}"
+              data-port-key="${escapeHtml(portItem.key)}"
+              data-expose="true"
+              ${busy ? "disabled" : ""}
+            >
+              ${busy ? "提交中" : escapeHtml(actionLabel)}
+            </button>
+            ${
+              portItem.public
+                ? `
+                  <button
+                    type="button"
+                    class="service-port-action is-danger"
+                    data-action="toggle-service-port"
+                    data-namespace="${escapeHtml(item.namespace)}"
+                    data-service="${escapeHtml(item.service_name)}"
+                    data-port-key="${escapeHtml(portItem.key)}"
+                    data-expose="false"
+                    ${busy ? "disabled" : ""}
+                  >
+                    ${busy ? "提交中" : "关闭"}
+                  </button>
+                `
+                : ""
+            }
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+export function renderServiceControlNamespaceGroup(group, options = {}) {
+  const rows = group.services
+    .map((item) => renderServiceControlPortRows(item, options))
+    .join("");
+  return `
+    <section class="service-control-namespace">
+      <div class="service-control-namespace-head">
+        <div>
+          <p class="section-kicker">namespace</p>
+          <h3 class="service-name">${escapeHtml(group.namespace)}</h3>
+        </div>
+        <span class="section-note">服务 ${escapeHtml(group.services.length)} 个 · 端口 ${escapeHtml(group.portCount)} 个 · 已开放 ${escapeHtml(group.openPortCount)} 个</span>
+      </div>
+      <div class="service-control-table-shell">
+        <table class="service-control-table">
+          <thead>
+            <tr>
+              <th>服务</th>
+              <th>端口</th>
+              <th>当前对外</th>
+              <th>外部端口</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
 export function renderNodeCard(node) {
   const typeBadges = renderLabelBadges(node.typeLabels);
 
