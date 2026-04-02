@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openziti-installer
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openziti-stack-installer
+  namespace: openziti-installer
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openziti-stack-installer-cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: openziti-stack-installer
+    namespace: openziti-installer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: openziti-stack-installer
+  namespace: openziti-installer
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: openziti-stack-installer
+    spec:
+      restartPolicy: Never
+      serviceAccountName: openziti-stack-installer
+      containers:
+        - name: installer
+          image: local/k8s-port-audit-stack:0.2.2
+          imagePullPolicy: Never
+          command:
+            - /bin/bash
+            - /opt/k8s-node-surface/scripts/run-stack-installer-image.sh
+          env:
+            - name: PORT_AUDIT_APPLY_MANIFEST
+              value: "always"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi

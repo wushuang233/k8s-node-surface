@@ -1,0 +1,34 @@
+image:
+  pullPolicy: IfNotPresent
+
+dnsPolicy: ClusterFirst
+
+ctrl:
+  endpoint: ""
+
+enrollmentJwtFromSecret: true
+enrollmentJwtSecretName: ziti-router-enrollment
+
+edge:
+  advertisedPort: 30222
+  service:
+    type: NodePort
+
+linkListeners:
+  transport:
+    enabled: false
+
+persistence:
+  enabled: true
+  size: 50Mi
+
+csr:
+  sans:
+    noDefaults: true
+    dns:
+      - localhost
+    ip:
+      - 127.0.0.1
+
+tunnel:
+  mode: none

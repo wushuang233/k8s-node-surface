@@ -1,0 +1,59 @@
+ARG BASE_IMAGE=python:3.13-slim
+FROM ${BASE_IMAGE}
+
+ARG KUBECTL_VERSION=v1.34.3
+ARG HELM_VERSION=v4.0.5
+ARG STACK_SOURCE_SHA=unknown
+ARG HTTP_PROXY=
+ARG HTTPS_PROXY=
+ARG ALL_PROXY=
+ARG http_proxy=
+ARG https_proxy=
+ARG all_proxy=
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+
+LABEL io.k8s-node-surface.stack-source-sha="${STACK_SOURCE_SHA}"
+
+WORKDIR /opt/k8s-node-surface
+
+RUN export HTTP_PROXY= HTTPS_PROXY= ALL_PROXY= http_proxy= https_proxy= all_proxy= \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        curl \
+        jq \
+        openssl \
+        tar \
+        gzip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN export HTTP_PROXY= HTTPS_PROXY= ALL_PROXY= http_proxy= https_proxy= all_proxy= \
+    && curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+    && chmod +x /usr/local/bin/kubectl \
+    && curl -fsSL -o /tmp/helm.tar.gz "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" \
+    && tar -xzf /tmp/helm.tar.gz -C /tmp \
+    && mv /tmp/linux-amd64/helm /usr/local/bin/helm \
+    && chmod +x /usr/local/bin/helm \
+    && rm -rf /tmp/helm.tar.gz /tmp/linux-amd64
+
+COPY requirements.txt /opt/k8s-node-surface/requirements.txt
+RUN pip install --no-cache-dir -r /opt/k8s-node-surface/requirements.txt
+
+COPY VERSION /opt/k8s-node-surface/VERSION
+COPY main.py /opt/k8s-node-surface/main.py
+COPY README-BUILD.md /opt/k8s-node-surface/README-BUILD.md
+COPY README-DEPLOY.md /opt/k8s-node-surface/README-DEPLOY.md
+COPY README-OPENZITI-K3S.md /opt/k8s-node-surface/README-OPENZITI-K3S.md
+COPY config /opt/k8s-node-surface/config
+COPY k8s_port_audit /opt/k8s-node-surface/k8s_port_audit
+COPY manifests /opt/k8s-node-surface/manifests
+COPY scripts /opt/k8s-node-surface/scripts
+COPY web /opt/k8s-node-surface/web
+COPY ziti /opt/k8s-node-surface/ziti
+
+ENTRYPOINT ["python", "-m", "k8s_port_audit"]
+CMD ["--config", "/opt/k8s-node-surface/config/scanner-config.yaml"]

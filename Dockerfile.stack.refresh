@@ -1,0 +1,23 @@
+ARG BASE_IMAGE=local/k8s-port-audit-stack:0.2.2
+FROM ${BASE_IMAGE}
+
+ARG STACK_SOURCE_SHA=unknown
+
+WORKDIR /opt/k8s-node-surface
+
+LABEL io.k8s-node-surface.stack-source-sha="${STACK_SOURCE_SHA}"
+
+COPY VERSION /opt/k8s-node-surface/VERSION
+COPY main.py /opt/k8s-node-surface/main.py
+COPY README-BUILD.md /opt/k8s-node-surface/README-BUILD.md
+COPY README-DEPLOY.md /opt/k8s-node-surface/README-DEPLOY.md
+COPY README-OPENZITI-K3S.md /opt/k8s-node-surface/README-OPENZITI-K3S.md
+COPY config /opt/k8s-node-surface/config
+COPY k8s_port_audit /opt/k8s-node-surface/k8s_port_audit
+COPY manifests /opt/k8s-node-surface/manifests
+COPY scripts /opt/k8s-node-surface/scripts
+COPY web /opt/k8s-node-surface/web
+COPY ziti /opt/k8s-node-surface/ziti
+
+ENTRYPOINT ["python", "-m", "k8s_port_audit"]
+CMD ["--config", "/opt/k8s-node-surface/config/scanner-config.yaml"]

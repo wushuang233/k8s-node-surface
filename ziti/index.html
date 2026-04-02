@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenZiti 控制台</title>
+    <link rel="stylesheet" href="/ziti/styles.css" />
+  </head>
+  <body>
+    <div class="page-glow page-glow-a"></div>
+    <div class="page-glow page-glow-b"></div>
+    <main class="shell">
+      <section class="hero panel">
+        <div>
+          <p class="eyebrow">OpenZiti Admin</p>
+          <h1>Ziti 管理工作台</h1>
+          <p class="hero-text">
+            登录 controller，统一查看和维护路由器、服务、配置、身份与各类策略，并直接执行常见的新增、编辑、删除操作。
+          </p>
+        </div>
+        <div class="hero-badges">
+          <span class="badge badge-primary">Controller Login</span>
+          <span class="badge">Routers</span>
+          <span class="badge">Services</span>
+          <span class="badge">Configs</span>
+          <span class="badge">Policies</span>
+          <span class="badge">Identities</span>
+        </div>
+      </section>
+
+      <section id="error-banner" class="banner hidden"></section>
+
+      <section class="top-grid">
+        <article class="panel login-panel">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">登录</p>
+              <h2>控制器会话</h2>
+            </div>
+          </div>
+          <form id="login-form" class="form-stack">
+            <label class="field">
+              <span>Controller URL</span>
+              <input id="controller-url" name="controller_url" type="text" />
+            </label>
+            <label class="field">
+              <span>用户名</span>
+              <input id="username" name="username" type="text" autocomplete="username" />
+            </label>
+            <label class="field">
+              <span>密码</span>
+              <input id="password" name="password" type="password" autocomplete="current-password" />
+            </label>
+            <div class="button-row">
+              <button id="login-button" type="submit">登录 Controller</button>
+              <button id="logout-button" type="button" class="button-muted">退出登录</button>
+            </div>
+          </form>
+        </article>
+
+        <article class="panel session-panel">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">状态</p>
+              <h2>当前会话</h2>
+            </div>
+            <div class="button-row compact">
+              <button id="refresh-button" type="button" class="button-muted">刷新数据</button>
+            </div>
+          </div>
+          <div class="status-grid">
+            <article class="status-card">
+              <span>登录状态</span>
+              <strong id="session-state">未登录</strong>
+            </article>
+            <article class="status-card">
+              <span>Controller</span>
+              <strong id="session-controller">-</strong>
+            </article>
+            <article class="status-card">
+              <span>身份</span>
+              <strong id="session-identity">-</strong>
+            </article>
+            <article class="status-card">
+              <span>过期时间</span>
+              <strong id="session-expiry">-</strong>
+            </article>
+          </div>
+        </article>
+      </section>
+
+      <section id="jwt-panel" class="panel hidden">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Enrollment JWT</p>
+            <h2 id="jwt-title">Enrollment JWT</h2>
+          </div>
+          <div class="button-row compact">
+            <button id="copy-jwt-command-button" type="button" class="button-muted">复制示例签发命令</button>
+            <button id="copy-jwt-enroll-button" type="button" class="button-muted">复制示例 Enroll 命令</button>
+            <button id="copy-jwt-button" type="button" class="button-muted">复制 JWT</button>
+            <button id="clear-jwt-button" type="button" class="button-muted">清空</button>
+          </div>
+        </div>
+        <p id="jwt-note" class="section-note"></p>
+        <div id="jwt-command-panel" class="config-json-shell hidden">
+          <div class="builder-row">
+            <strong>参考命令</strong>
+          </div>
+          <pre id="jwt-command-output" class="json-block mono"></pre>
+        </div>
+        <div id="jwt-enroll-panel" class="config-json-shell hidden">
+          <div class="builder-row">
+            <strong>参考：Enroll 成 JSON</strong>
+          </div>
+          <pre id="jwt-enroll-output" class="json-block mono"></pre>
+        </div>
+        <textarea id="jwt-output" readonly spellcheck="false"></textarea>
+      </section>
+
+      <section class="panel workspace-panel">
+        <div class="workspace-toolbar">
+          <div class="tab-row">
+            <button class="tab-button is-active" data-tab="configs" type="button">
+              <span class="tab-step">1</span>
+              <span class="tab-copy"><strong>配置</strong><small>按 intercept / host 分组查看</small></span>
+            </button>
+            <button class="tab-button" data-tab="services" type="button">
+              <span class="tab-step">2</span>
+              <span class="tab-copy"><strong>服务</strong><small>一眼看懂谁访问谁、谁在托管</small></span>
+            </button>
+            <button class="tab-button" data-tab="identities" type="button">
+              <span class="tab-step">3</span>
+              <span class="tab-copy"><strong>身份</strong><small>区分客户端、托管端和可用 router</small></span>
+            </button>
+            <button class="tab-button" data-tab="service-policies" type="button">
+              <span class="tab-step">4</span>
+              <span class="tab-copy"><strong>服务策略</strong><small>Dial / Bind 分开看</small></span>
+            </button>
+            <button class="tab-button" data-tab="service-edge-router-policies" type="button">
+              <span class="tab-step">5</span>
+              <span class="tab-copy"><strong>服务接入策略</strong><small>服务可走哪些 router</small></span>
+            </button>
+            <button class="tab-button" data-tab="edge-router-policies" type="button">
+              <span class="tab-step">6</span>
+              <span class="tab-copy"><strong>路由器策略</strong><small>身份可用哪些 router</small></span>
+            </button>
+            <button class="tab-button" data-tab="edge-routers" type="button">
+              <span class="tab-step">7</span>
+              <span class="tab-copy"><strong>路由器</strong><small>查看状态与重签 JWT</small></span>
+            </button>
+          </div>
+          <div class="workspace-actions">
+            <label id="alive-only-label" class="toggle-chip">
+              <input id="alive-only-checkbox" type="checkbox" />
+              <span>只看存活路由器</span>
+            </label>
+            <button id="add-entity-button" type="button">新增</button>
+          </div>
+        </div>
+        <div id="workspace-guide" class="workspace-guide"></div>
+        <div id="stats-strip" class="stats-strip"></div>
+        <div id="content-panel" class="content-panel"></div>
+      </section>
+    </main>
+
+    <dialog id="entity-dialog" class="entity-dialog">
+      <form id="entity-form" method="dialog" class="dialog-card">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker" id="dialog-kicker">编辑</p>
+            <h2 id="dialog-title">资源</h2>
+          </div>
+          <button id="dialog-close-button" type="button" class="button-muted">关闭</button>
+        </div>
+        <div id="dialog-body" class="dialog-body"></div>
+        <div id="dialog-command-preview" class="dialog-command-preview hidden"></div>
+        <p class="text-helper">点击“创建 / 保存”后，页面会直接调用 controller management API 执行操作；下方命令只是参考示例。</p>
+        <div class="button-row">
+          <button id="dialog-submit-button" type="submit">保存</button>
+          <button id="dialog-cancel-button" type="button" class="button-muted">取消</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/ziti/app.js"></script>
+  </body>
+</html>

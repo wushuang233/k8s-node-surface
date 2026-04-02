@@ -1,0 +1,169 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: port-audit
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s-port-audit
+  namespace: port-audit
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8s-port-audit
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - services
+      - nodes
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources:
+      - services
+    verbs: ["create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources:
+      - services/proxy
+    verbs: ["get", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8s-port-audit
+subjects:
+  - kind: ServiceAccount
+    name: k8s-port-audit
+    namespace: port-audit
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8s-port-audit
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k8s-port-audit-config
+  namespace: port-audit
+data:
+  scanner-config.yaml: |
+    scan:
+      timeout_seconds: 0.5
+      concurrency: 300
+      interval_seconds: 3600
+      watch_kubernetes_events: true
+      event_watch_timeout_seconds: 45
+      event_debounce_seconds: 2
+      output_path: /tmp/k8s-port-report.json
+
+    scope:
+      include_namespaces: []
+      exclude_namespaces:
+        - kube-public
+
+    discovery:
+      service_external_ips: true
+      node_ports: true
+      host_ports: true
+      host_network_ports: true
+      full_node_tcp_scan: true
+
+    ports:
+      full_node_tcp_ports: 1-65535
+
+    service_control:
+      enabled: true
+      public_service_type: NodePort
+      node_port_range: 30000-32767
+
+    report:
+      pretty_json: true
+
+    traffic_observation:
+      enabled: true
+      host_proc_root: /host-proc
+
+    web:
+      enabled: true
+      host: 0.0.0.0
+      port: 8080
+      refresh_seconds: 8
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-port-audit
+  namespace: port-audit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k8s-port-audit
+  template:
+    metadata:
+      labels:
+        app: k8s-port-audit
+    spec:
+      serviceAccountName: k8s-port-audit
+      containers:
+        - name: scanner
+          envFrom:
+            - secretRef:
+                name: k8s-port-audit-ziti-admin
+                optional: true
+          image: local/k8s-port-audit-stack:0.2.2
+          imagePullPolicy: Never
+          command:
+            - python
+            - -m
+            - k8s_port_audit
+          args:
+            - --config
+            - /opt/k8s-node-surface/config/scanner-config.yaml
+          env:
+            - name: MY_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: NV_SYSTEM_GROUPS
+              value: ""
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: scanner-config
+              mountPath: /opt/k8s-node-surface/config
+              readOnly: true
+            - name: host-proc
+              mountPath: /host-proc
+              readOnly: true
+      volumes:
+        - name: scanner-config
+          configMap:
+            name: k8s-port-audit-config
+        - name: host-proc
+          hostPath:
+            path: /proc
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-port-audit
+  namespace: port-audit
+spec:
+  selector:
+    app: k8s-port-audit
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

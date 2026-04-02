@@ -1,0 +1,12 @@
+image:
+  pullPolicy: IfNotPresent
+
+clientApi:
+  advertisedPort: 31280
+  service:
+    type: NodePort
+
+persistence:
+  enabled: true
+  existingClaim: ziti-controller-db
+  size: 2Gi

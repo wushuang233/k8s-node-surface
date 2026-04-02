@@ -23,7 +23,24 @@ rules:
   - apiGroups: [""]
     resources:
       - services
+      - secrets
+      - configmaps
+      - persistentvolumeclaims
     verbs: ["create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources:
+      - secrets
+      - configmaps
+      - persistentvolumeclaims
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources:
+      - services/proxy
+    verbs: ["get", "create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -105,6 +122,10 @@ spec:
       serviceAccountName: k8s-port-audit
       containers:
         - name: scanner
+          envFrom:
+            - secretRef:
+                name: k8s-port-audit-ziti-admin
+                optional: true
           image: local/k8s-port-audit:0.2.2
           imagePullPolicy: Never
           command:
