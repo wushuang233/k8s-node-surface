@@ -20,10 +20,58 @@ import {
   toJsonPayload,
 } from "./shared.js";
 
+const MANAGER_API_MARKER = "/microsegx/ui/";
+
+function resolveApiBase() {
+  const path = window.location.pathname || "";
+  const markerIndex = path.indexOf(MANAGER_API_MARKER);
+  if (markerIndex >= 0) {
+    return `${path.slice(0, markerIndex)}/microsegx/api`;
+  }
+  return "";
+}
+
+function buildApiUrl(path) {
+  const base = resolveApiBase();
+  if (!base) {
+    return path;
+  }
+  if (path.startsWith("/api/")) {
+    return `${base}${path.slice(4)}`;
+  }
+  return `${base}${path}`;
+}
+
+function resolveManagerToken() {
+  try {
+    const raw = window.localStorage.getItem("token");
+    if (!raw) {
+      return "";
+    }
+    const parsed = JSON.parse(raw);
+    return parsed?.token?.token || "";
+  } catch (_error) {
+    return "";
+  }
+}
+
+function buildRequestHeaders(extraHeaders = {}) {
+  const token = resolveManagerToken();
+  return {
+    ...(token && resolveApiBase() ? { Token: token } : {}),
+    ...extraHeaders,
+  };
+}
+
+if (window.self !== window.top || window.location.pathname.includes(MANAGER_API_MARKER)) {
+  document.body.classList.add("manager-embedded");
+}
+
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, {
     headers: {
       "Content-Type": "application/json",
+      ...buildRequestHeaders(),
       ...(options.headers || {}),
     },
     ...options,
@@ -46,13 +94,13 @@ async function loadOverview() {
     renderWorkspace();
     return;
   }
-  const payload = await fetchJson("/api/ziti/overview", { headers: {} });
+  const payload = await fetchJson(buildApiUrl("/api/ziti/overview"), { headers: {} });
   state.overview = payload;
   renderWorkspace();
 }
 
 async function loadSession() {
-  const payload = await fetchJson("/api/ziti/session", {
+  const payload = await fetchJson(buildApiUrl("/api/ziti/session"), {
     headers: {},
   });
   state.session = payload.logged_in ? payload : null;
@@ -76,7 +124,7 @@ async function handleLogin(event) {
   state.busy = true;
   renderWorkspace();
   try {
-    const payload = await fetchJson("/api/ziti/login", {
+    const payload = await fetchJson(buildApiUrl("/api/ziti/login"), {
       method: "POST",
       body: JSON.stringify({
         controller_url: refs.controllerUrl.value.trim(),
@@ -100,7 +148,7 @@ async function handleLogout() {
   state.busy = true;
   renderWorkspace();
   try {
-    await fetchJson("/api/ziti/logout", {
+    await fetchJson(buildApiUrl("/api/ziti/logout"), {
       method: "POST",
       body: JSON.stringify({}),
     });
@@ -142,7 +190,7 @@ async function handleEntitySubmit(event) {
   try {
     const payload = toJsonPayload(new FormData(refs.entityForm));
     const { resourceType, mode, entity } = state.modal;
-    const baseUrl = `/api/ziti/${resourceType}`;
+    const baseUrl = buildApiUrl(`/api/ziti/${resourceType}`);
     const url = mode === "create" ? baseUrl : `${baseUrl}/${entity.id}`;
     const method = mode === "create" ? "POST" : "PATCH";
     const response = await fetchJson(url, {
@@ -165,7 +213,7 @@ async function handleEntitySubmit(event) {
       const identityId = response.data?.id;
       const identityName = response.data?.name || payload.name;
       if (identityId) {
-        const jwtResponse = await fetchJson(`/api/ziti/identities/${identityId}/client-jwt`, {
+        const jwtResponse = await fetchJson(buildApiUrl(`/api/ziti/identities/${identityId}/client-jwt`), {
           method: "POST",
           body: JSON.stringify({ rotate: false, durationMinutes: 30 }),
         });
@@ -220,7 +268,7 @@ async function handleCardAction(event) {
     state.busy = true;
     renderWorkspace();
     try {
-      await fetchJson(`/api/ziti/${resourceType}/${entityId}`, {
+      await fetchJson(buildApiUrl(`/api/ziti/${resourceType}/${entityId}`), {
         method: "DELETE",
         body: JSON.stringify({}),
       });
@@ -239,7 +287,7 @@ async function handleCardAction(event) {
     state.busy = true;
     renderWorkspace();
     try {
-      const response = await fetchJson(`/api/ziti/edge-routers/${entityId}/re-enroll`, {
+      const response = await fetchJson(buildApiUrl(`/api/ziti/edge-routers/${entityId}/re-enroll`), {
         method: "POST",
         body: JSON.stringify({}),
       });
@@ -274,7 +322,7 @@ async function handleCardAction(event) {
     state.busy = true;
     renderWorkspace();
     try {
-      const response = await fetchJson(`/api/ziti/edge-routers/${entityId}/deploy-k8s`, {
+      const response = await fetchJson(buildApiUrl(`/api/ziti/edge-routers/${entityId}/deploy-k8s`), {
         method: "POST",
         body: JSON.stringify({}),
       });
@@ -305,7 +353,7 @@ async function handleCardAction(event) {
     state.busy = true;
     renderWorkspace();
     try {
-      await fetchJson(`/api/ziti/edge-routers/${entityId}/deploy-k8s`, {
+      await fetchJson(buildApiUrl(`/api/ziti/edge-routers/${entityId}/deploy-k8s`), {
         method: "DELETE",
         body: JSON.stringify({}),
       });
@@ -325,7 +373,7 @@ async function handleCardAction(event) {
     renderWorkspace();
     try {
       const rotate = action === "identity-jwt-rotate";
-      const response = await fetchJson(`/api/ziti/identities/${entityId}/client-jwt`, {
+      const response = await fetchJson(buildApiUrl(`/api/ziti/identities/${entityId}/client-jwt`), {
         method: "POST",
         body: JSON.stringify({ rotate, durationMinutes: 30 }),
       });

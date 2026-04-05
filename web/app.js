@@ -8,6 +8,53 @@ import {
 } from "./app-data.js";
 import { createRenderer } from "./app-render.js";
 
+const MANAGER_API_MARKER = "/microsegx/ui/";
+
+function resolveApiBase() {
+  const path = window.location.pathname || "";
+  const markerIndex = path.indexOf(MANAGER_API_MARKER);
+  if (markerIndex >= 0) {
+    return `${path.slice(0, markerIndex)}/microsegx/api`;
+  }
+  return "";
+}
+
+function resolveManagerToken() {
+  try {
+    const raw = window.localStorage.getItem("token");
+    if (!raw) {
+      return "";
+    }
+    const parsed = JSON.parse(raw);
+    return parsed?.token?.token || "";
+  } catch (_error) {
+    return "";
+  }
+}
+
+function buildApiUrl(path) {
+  const base = resolveApiBase();
+  if (!base) {
+    return path;
+  }
+  if (path.startsWith("/api/")) {
+    return `${base}${path.slice(4)}`;
+  }
+  return `${base}${path}`;
+}
+
+function buildRequestHeaders(extraHeaders = {}) {
+  const token = resolveManagerToken();
+  return {
+    ...(token && resolveApiBase() ? { Token: token } : {}),
+    ...extraHeaders,
+  };
+}
+
+if (window.self !== window.top || window.location.pathname.includes(MANAGER_API_MARKER)) {
+  document.body.classList.add("manager-embedded");
+}
+
 const refs = {
   statsPanel: document.querySelector("#stats-panel"),
   filterControls: document.querySelector("#filter-controls"),
@@ -192,7 +239,10 @@ function ensureRefreshTimer(payload) {
 }
 
 async function fetchJson(url, init, fallbackLabel) {
-  const response = await fetch(url, init);
+  const response = await fetch(url, {
+    ...init,
+    headers: buildRequestHeaders(init?.headers || {}),
+  });
   let payload = null;
   try {
     payload = await response.json();
@@ -218,7 +268,7 @@ function scheduleDashboardRefresh(options = {}) {
   state.followupRefreshTimer = window.setTimeout(async () => {
     try {
       const payload = await fetchJson(
-        "/api/dashboard",
+        buildApiUrl("/api/dashboard"),
         { cache: "no-store" },
         "dashboard request failed"
       );
@@ -245,7 +295,7 @@ function scheduleDashboardRefresh(options = {}) {
 
 async function fetchDashboard() {
   const payload = await fetchJson(
-    "/api/dashboard",
+    buildApiUrl("/api/dashboard"),
     { cache: "no-store" },
     "dashboard request failed"
   );
@@ -263,7 +313,7 @@ async function triggerScan() {
 
   try {
     const payload = await fetchJson(
-      "/api/scan",
+      buildApiUrl("/api/scan"),
       {
         method: "POST",
         cache: "no-store",
@@ -311,7 +361,7 @@ async function toggleServicePort(button) {
 
   try {
     const payload = await fetchJson(
-      "/api/service-controls/toggle",
+      buildApiUrl("/api/service-controls/toggle"),
       {
         method: "POST",
         cache: "no-store",

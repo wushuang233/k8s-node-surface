@@ -1,22 +1,22 @@
 :root {
   color-scheme: light;
-  --bg: #f3efe6;
-  --panel: rgba(255, 250, 242, 0.88);
-  --panel-strong: rgba(255, 247, 236, 0.96);
-  --line: rgba(76, 55, 34, 0.14);
-  --line-strong: rgba(76, 55, 34, 0.28);
-  --text: #1e1610;
-  --muted: #73604e;
-  --brand: #9f3d22;
-  --brand-deep: #6a2414;
-  --accent: #1f6b63;
-  --warn: #8c5d12;
-  --danger: #95271d;
-  --shadow: 0 22px 60px rgba(57, 34, 15, 0.14);
+  --bg: #f5f7fa;
+  --panel: rgba(255, 255, 255, 0.9);
+  --panel-strong: rgba(255, 255, 255, 0.98);
+  --line: rgba(31, 35, 41, 0.1);
+  --line-strong: rgba(31, 35, 41, 0.2);
+  --text: #1f2329;
+  --muted: #637083;
+  --brand: #1677ff;
+  --brand-deep: #0958d9;
+  --accent: #1f8f5f;
+  --warn: #b7791f;
+  --danger: #c0392b;
+  --shadow: 0 22px 60px rgba(15, 23, 42, 0.12);
   --radius: 24px;
   --mono: "JetBrains Mono", "Cascadia Code", "SFMono-Regular", monospace;
   --sans: "IBM Plex Sans", "Segoe UI", "PingFang SC", sans-serif;
-  --title: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
+  --title: "Poppins", "IBM Plex Sans", "Segoe UI", sans-serif;
 }
 
 * {
@@ -34,9 +34,9 @@ body {
   line-height: 1.6;
   letter-spacing: 0.01em;
   background:
-    radial-gradient(circle at top left, rgba(202, 120, 82, 0.26), transparent 28rem),
-    radial-gradient(circle at bottom right, rgba(77, 135, 124, 0.18), transparent 24rem),
-    linear-gradient(180deg, #f7f2e7 0%, #efe7d7 100%);
+    radial-gradient(circle at top left, rgba(22, 119, 255, 0.16), transparent 28rem),
+    radial-gradient(circle at bottom right, rgba(64, 150, 255, 0.14), transparent 24rem),
+    linear-gradient(180deg, #f7faff 0%, #edf4ff 100%);
   color: var(--text);
 }
 
@@ -103,13 +103,13 @@ button:disabled {
 .page-glow-a {
   top: -8rem;
   right: -6rem;
-  background: rgba(161, 63, 35, 0.26);
+  background: rgba(22, 119, 255, 0.22);
 }
 
 .page-glow-b {
   bottom: -8rem;
   left: -6rem;
-  background: rgba(39, 113, 103, 0.2);
+  background: rgba(64, 150, 255, 0.18);
 }
 
 .panel {
@@ -1177,4 +1177,26 @@ button:disabled {
     right: auto;
     width: min(100%, calc(100vw - 2rem));
   }
+}
+
+body.manager-embedded {
+  min-height: auto;
+  background: transparent;
+}
+
+body.manager-embedded .page-glow {
+  display: none;
+}
+
+body.manager-embedded .shell {
+  width: min(100%, calc(100% - 1rem));
+  padding: 1rem 0 1.5rem;
+}
+
+body.manager-embedded .panel {
+  box-shadow: none;
+}
+
+body.manager-embedded .hero {
+  padding: 1.6rem;
 }
