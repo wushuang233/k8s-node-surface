@@ -122,6 +122,10 @@ spec:
       serviceAccountName: k8s-port-audit
       containers:
         - name: scanner
+          envFrom:
+            - secretRef:
+                name: k8s-port-audit-ziti-admin
+                optional: true
           image: your-registry/k8s-port-audit:0.2.2
           imagePullPolicy: IfNotPresent
           command:

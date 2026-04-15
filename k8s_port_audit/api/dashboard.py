@@ -12,11 +12,11 @@ from typing import Any
 from urllib.parse import urlparse
 
 from ..control import ServiceExposureController
-from ..control.service_controls import ServiceControlError
+from ..control.service_controls import ServiceControlError, SUPPORTED_SERVICE_TYPES
 from ..report import utc_now
 from ..runtime.dependencies import ApiException, client
 from ..runtime.state import ReportStore, ScanCoordinator
-from ..settings.config import ScannerConfig
+from ..settings.config import ScannerConfig, namespace_allowed
 from .ziti_admin import (
     ZITI_RESOURCE_TYPES,
     ZitiApiError,
@@ -43,6 +43,7 @@ from .ziti_router_k8s import (
     find_router_workload,
     list_router_workloads,
 )
+from .ziti_service_router import ensure_service_router_attachment
 
 WEB_DIR = Path(__file__).resolve().parent.parent.parent / "web"
 ZITI_WEB_DIR = Path(__file__).resolve().parent.parent.parent / "ziti"
@@ -106,6 +107,16 @@ class DashboardHTTPServer(ThreadingHTTPServer):
 
 class DashboardRequestHandler(BaseHTTPRequestHandler):
     server: DashboardHTTPServer
+    RESERVED_SERVICE_NAMESPACES = {
+        "cert-manager",
+        "kube-system",
+        "kube-public",
+        "kube-node-lease",
+        "local-path-storage",
+        "microsegx",
+        "openziti",
+        "port-audit",
+    }
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
@@ -153,6 +164,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/service-controls/toggle":
             self.handle_service_control_toggle()
             return
+        if path == "/api/service-controls/services":
+            self.handle_service_create()
+            return
         if path == "/api/ziti/login":
             self.handle_ziti_login()
             return
@@ -183,6 +197,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/ziti/service-edge-router-policies":
             self.handle_ziti_create("service-edge-router-policies")
             return
+        if path.startswith("/api/ziti/services/") and path.endswith("/attach-router"):
+            self.handle_ziti_service_attach_router()
+            return
         if path.startswith("/api/ziti/edge-routers/") and path.endswith("/deploy-k8s"):
             self.handle_ziti_edge_router_deploy_k8s()
             return
@@ -203,6 +220,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path.startswith("/api/ziti/edge-routers/") and path.endswith("/deploy-k8s"):
             self.handle_ziti_edge_router_delete_k8s()
+            return
+        if path == "/api/service-controls/services":
+            self.handle_service_delete()
             return
         if path.startswith("/api/ziti/"):
             self.handle_ziti_delete()
@@ -262,6 +282,122 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         )
         response = self.server.dashboard_snapshot()
         response["service_control_action"] = action
+        self.serve_json(response, status_code=200)
+
+    def handle_service_create(self) -> None:
+        if self.server.service_controller is None or not self.server.scanner_config.service_control_enabled:
+            self.serve_json(
+                {"error": "当前未启用业务 Service 治理功能"},
+                status_code=404,
+            )
+            return
+
+        try:
+            payload = self.read_json_body()
+            namespace = str(payload.get("namespace", "")).strip()
+            service_name = str(payload.get("service_name", "")).strip()
+            service_type = str(payload.get("service_type", "ClusterIP") or "ClusterIP").strip()
+            selector = self.read_dict(payload.get("selector"), "selector")
+            labels = self.read_dict(payload.get("labels"), "labels")
+            annotations = self.read_dict(payload.get("annotations"), "annotations")
+            raw_ports = payload.get("ports")
+            body = self.build_k8s_service_body(
+                namespace=namespace,
+                service_name=service_name,
+                service_type=service_type,
+                selector=selector,
+                raw_ports=raw_ports,
+                labels=labels,
+                annotations=annotations,
+            )
+            created = self.server.service_controller.core_api.create_namespaced_service(namespace, body)
+        except json.JSONDecodeError:
+            self.serve_json({"error": "请求体不是合法 JSON"}, status_code=400)
+            return
+        except ValueError as exc:
+            self.serve_json({"error": str(exc)}, status_code=400)
+            return
+        except ServiceControlError as exc:
+            self.serve_json({"error": str(exc)}, status_code=409)
+            return
+        except ApiException as exc:
+            status_code = 409 if getattr(exc, "status", None) == 409 else 502
+            self.serve_json(
+                {"error": f"Kubernetes API 错误: status={getattr(exc, 'status', 'unknown')} detail={exc}"},
+                status_code=status_code,
+            )
+            return
+
+        self.server.scan_coordinator.request_scan(
+            "service_control",
+            reason="新增业务 Service",
+            full_scan=True,
+        )
+        response = self.server.dashboard_snapshot()
+        response["service_create_action"] = {
+            "namespace": namespace,
+            "service_name": service_name,
+            "service_type": service_type,
+            "created_name": str(getattr(getattr(created, "metadata", None), "name", None) or service_name),
+        }
+        self.serve_json(response, status_code=201)
+
+    def handle_service_delete(self) -> None:
+        if self.server.service_controller is None or not self.server.scanner_config.service_control_enabled:
+            self.serve_json(
+                {"error": "当前未启用业务 Service 治理功能"},
+                status_code=404,
+            )
+            return
+
+        try:
+            payload = self.read_json_body()
+            namespace = str(payload.get("namespace", "")).strip()
+            service_name = str(payload.get("service_name", "")).strip()
+            if not namespace or not service_name:
+                raise ValueError("namespace、service_name 不能为空")
+
+            controller = self.server.service_controller
+            original_service = controller.get_original_service(namespace, service_name)
+            manageable, reason = controller.service_manageability(original_service)
+            if not manageable:
+                raise ServiceControlError(reason or "当前 Service 不允许在这里删除")
+
+            managed_service = controller.get_managed_service(namespace, service_name)
+            if managed_service is not None:
+                controller.core_api.delete_namespaced_service(
+                    managed_service.metadata.name,
+                    namespace,
+                )
+            controller.core_api.delete_namespaced_service(service_name, namespace)
+        except json.JSONDecodeError:
+            self.serve_json({"error": "请求体不是合法 JSON"}, status_code=400)
+            return
+        except ValueError as exc:
+            self.serve_json({"error": str(exc)}, status_code=400)
+            return
+        except ServiceControlError as exc:
+            self.serve_json({"error": str(exc)}, status_code=409)
+            return
+        except ApiException as exc:
+            status_code = 404 if getattr(exc, "status", None) == 404 else 502
+            self.serve_json(
+                {"error": f"Kubernetes API 错误: status={getattr(exc, 'status', 'unknown')} detail={exc}"},
+                status_code=status_code,
+            )
+            return
+
+        self.server.scan_coordinator.request_scan(
+            "service_control",
+            reason="删除业务 Service",
+            full_scan=True,
+        )
+        response = self.server.dashboard_snapshot()
+        response["service_delete_action"] = {
+            "namespace": namespace,
+            "service_name": service_name,
+            "deleted": True,
+        }
         self.serve_json(response, status_code=200)
 
     def handle_ziti_session(self) -> None:
@@ -365,6 +501,11 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 "/edge/management/v1/service-edge-router-policies",
                 query={"limit": "500"},
             ).get("data", [])
+            terminators = self.ziti_request_json(
+                "GET",
+                "/edge/management/v1/terminators",
+                query={"limit": "500"},
+            ).get("data", [])
             identities = self.ziti_request_json(
                 "GET",
                 "/edge/management/v1/identities",
@@ -434,6 +575,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 "service_policies": service_policies,
                 "edge_router_policies": edge_router_policies,
                 "service_edge_router_policies": service_edge_router_policies,
+                "terminators": terminators,
                 "identities": identities,
                 "posture_checks": posture_checks,
                 "auth_policies": auth_policies,
@@ -506,6 +648,124 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
         items.sort(key=lambda item: (item.get("namespace", ""), item.get("name", "")))
         return items
+
+    def build_k8s_service_body(
+        self,
+        *,
+        namespace: str,
+        service_name: str,
+        service_type: str,
+        selector: dict[str, Any],
+        raw_ports: Any,
+        labels: dict[str, Any],
+        annotations: dict[str, Any],
+    ) -> dict[str, Any]:
+        controller = self.server.service_controller
+        if controller is None:
+            raise ServiceControlError("当前未启用业务 Service 治理功能")
+
+        if not namespace:
+            raise ValueError("namespace 不能为空")
+        if not service_name:
+            raise ValueError("service_name 不能为空")
+        if not namespace_allowed(namespace, self.server.scanner_config):
+            raise ServiceControlError("目标命名空间不在当前治理范围内")
+        if self.is_reserved_service_namespace(namespace):
+            raise ServiceControlError("系统命名空间不允许在这里新增业务 Service")
+
+        normalized_type = service_type if service_type in SUPPORTED_SERVICE_TYPES else ""
+        if not normalized_type:
+            raise ValueError(f"service_type 仅支持: {', '.join(sorted(SUPPORTED_SERVICE_TYPES))}")
+
+        selector_body = {
+            str(key).strip(): str(value).strip()
+            for key, value in selector.items()
+            if str(key).strip() and str(value).strip()
+        }
+        if not selector_body:
+            raise ValueError("selector 至少需要一个键值对")
+
+        if not isinstance(raw_ports, list) or not raw_ports:
+            raise ValueError("ports 至少需要一个端口定义")
+
+        metadata_labels = {
+            str(key).strip(): str(value).strip()
+            for key, value in labels.items()
+            if str(key).strip() and str(value).strip()
+        }
+        metadata_annotations = {
+            str(key).strip(): str(value).strip()
+            for key, value in annotations.items()
+            if str(key).strip() and str(value).strip()
+        }
+
+        port_bodies: list[dict[str, Any]] = []
+        seen_port_names: set[str] = set()
+        seen_service_ports: set[int] = set()
+        for index, item in enumerate(raw_ports, start=1):
+            if not isinstance(item, dict):
+                raise ValueError(f"ports[{index}] 必须是 JSON 对象")
+
+            protocol = str(item.get("protocol", "TCP") or "TCP").strip().upper()
+            if protocol != "TCP":
+                raise ValueError(f"ports[{index}] 目前仅支持 TCP")
+
+            service_port = self.read_port_number(item.get("service_port"), f"ports[{index}].service_port")
+            if service_port in seen_service_ports:
+                raise ValueError(f"ports[{index}] 的 service_port 重复: {service_port}")
+            seen_service_ports.add(service_port)
+
+            target_port_raw = item.get("target_port")
+            if target_port_raw in {None, ""}:
+                target_port: int | str = service_port
+            else:
+                target_port_text = str(target_port_raw).strip()
+                target_port = int(target_port_text) if target_port_text.isdigit() else target_port_text
+
+            port_name = str(item.get("name", "") or "").strip()
+            if port_name:
+                if port_name in seen_port_names:
+                    raise ValueError(f"ports[{index}] 的 name 重复: {port_name}")
+                seen_port_names.add(port_name)
+
+            port_body: dict[str, Any] = {
+                "port": service_port,
+                "protocol": protocol,
+                "targetPort": target_port,
+            }
+            if port_name:
+                port_body["name"] = port_name
+
+            node_port_value = item.get("node_port")
+            if normalized_type == "NodePort" and node_port_value not in {None, "", 0, "0"}:
+                node_port = self.read_port_number(node_port_value, f"ports[{index}].node_port")
+                range_start, range_end = controller.node_port_range
+                if not range_start <= node_port <= range_end:
+                    raise ValueError(
+                        f"ports[{index}].node_port 必须在 {controller.node_port_range_spec} 范围内"
+                    )
+                port_body["nodePort"] = node_port
+
+            port_bodies.append(port_body)
+
+        body: dict[str, Any] = {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {
+                "name": service_name,
+                "namespace": namespace,
+            },
+            "spec": {
+                "type": normalized_type,
+                "selector": selector_body,
+                "ports": port_bodies,
+            },
+        }
+        if metadata_labels:
+            body["metadata"]["labels"] = metadata_labels
+        if metadata_annotations:
+            body["metadata"]["annotations"] = metadata_annotations
+        return body
 
     def handle_ziti_create(self, resource_type: str) -> None:
         try:
@@ -700,6 +960,51 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return
 
         self.serve_json(deleted, status_code=200)
+
+    def handle_ziti_service_attach_router(self) -> None:
+        path = urlparse(self.path).path
+        segments = self.path_segments(path)
+        if len(segments) != 5 or segments[:3] != ["api", "ziti", "services"] or segments[4] != "attach-router":
+            self.send_error(404, "Not Found")
+            return
+
+        service_id = segments[3]
+        try:
+            payload = self.read_json_body()
+            router_id = str(payload.get("routerId") or "").strip()
+            if not router_id:
+                raise ValueError("routerId 不能为空")
+
+            response = ensure_service_router_attachment(
+                self.ziti_request_json,
+                service_id=service_id,
+                router_id=router_id,
+                namespace=DEFAULT_ZITI_NAMESPACE,
+                auto_enable_router=self.read_optional_bool(payload.get("autoEnableRouter"), default=True),
+                wait_timeout_seconds=self.read_positive_int(
+                    payload.get("waitTimeoutSeconds"),
+                    "waitTimeoutSeconds",
+                    default=20,
+                ),
+            )
+        except json.JSONDecodeError:
+            self.serve_json({"error": "请求体不是合法 JSON"}, status_code=400)
+            return
+        except ValueError as exc:
+            self.serve_json({"error": str(exc)}, status_code=400)
+            return
+        except ZitiApiError as exc:
+            headers = {"Set-Cookie": expired_ziti_cookie_header()} if exc.status_code == 401 else None
+            self.serve_json({"error": str(exc)}, status_code=exc.status_code, headers=headers)
+            return
+        except ApiException as exc:
+            self.serve_json({"error": f"Kubernetes API 调用失败: {exc}"}, status_code=500)
+            return
+        except Exception as exc:
+            self.serve_json({"error": f"挂载服务到 router 失败: {type(exc).__name__}: {exc}"}, status_code=500)
+            return
+
+        self.serve_json({"data": response}, status_code=200)
 
     def handle_ziti_identity_client_jwt(self) -> None:
         path = urlparse(self.path).path
@@ -926,6 +1231,23 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         if not isinstance(value, dict):
             raise ValueError(f"{field_name} 必须是 JSON 对象")
         return value
+
+    @staticmethod
+    def read_port_number(value: Any, field_name: str) -> int:
+        if value in {None, ""}:
+            raise ValueError(f"{field_name} 不能为空")
+        try:
+            port = int(str(value).strip())
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field_name} 必须是数字端口") from exc
+        if not 1 <= port <= 65535:
+            raise ValueError(f"{field_name} 必须在 1-65535 之间")
+        return port
+
+    @classmethod
+    def is_reserved_service_namespace(cls, namespace: str) -> bool:
+        normalized = str(namespace or "").strip().lower()
+        return normalized.startswith("kube-") or normalized in cls.RESERVED_SERVICE_NAMESPACES
 
     @staticmethod
     def path_segments(path: str) -> list[str]:
